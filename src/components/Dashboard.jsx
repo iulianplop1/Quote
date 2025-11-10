@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { format } from 'date-fns'
 import { Clock, Film, User, Eye, EyeOff, Sparkles } from 'lucide-react'
@@ -217,9 +218,9 @@ export default function Dashboard() {
         <p className="text-slate-600 dark:text-slate-400 mb-6">
           Add some movies to your library to start receiving daily quotes!
         </p>
-        <a href="/library" className="btn-primary inline-block">
+        <Link to="/library" className="btn-primary inline-block">
           Go to Library
-        </a>
+        </Link>
       </div>
     )
   }
