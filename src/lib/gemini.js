@@ -7,22 +7,22 @@ if (!apiKey) {
 }
 
 const genAI = new GoogleGenerativeAI(apiKey)
-// Using gemini-2.5-flash per latest request
-const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
+// Using gemini-2.5-flash per latest request, with 1.5 as a fallback if the model is overloaded
+const primaryModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
+const fallbackModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
+const overloadPattern = /overloaded|503|service unavailable/i
 
 async function generateContentWithRetry(prompt, attempts = 3) {
   let lastError
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await model.generateContent(prompt)
+      return await primaryModel.generateContent(prompt)
     } catch (error) {
       lastError = error
       const message = error?.message ?? ''
       if (
         attempt < attempts &&
-        (message.includes('overloaded') ||
-          message.includes('503') ||
-          message.includes('Service Unavailable'))
+        overloadPattern.test(message)
       ) {
         const waitMs = 1000 * attempt
         console.warn(
@@ -34,14 +34,35 @@ async function generateContentWithRetry(prompt, attempts = 3) {
       break
     }
   }
+
+  const fallbackMessage = lastError?.message ?? ''
+  if (overloadPattern.test(fallbackMessage)) {
+    console.warn('Gemini 2.5 is overloaded after retries. Falling back to gemini-1.5-flash.')
+    return fallbackModel.generateContent(prompt)
+  }
+
   throw lastError
 }
 
-export { model }
+export { primaryModel as model }
+
+function chunkText(text, chunkSize) {
+  const chunks = []
+  for (let i = 0; i < text.length; i += chunkSize) {
+    chunks.push(text.slice(i, i + chunkSize))
+  }
+  return chunks
+}
 
 // Parse script and extract quotes with significance scores
 export async function parseScript(scriptText, movieTitle) {
-  const prompt = `You are a movie script parser. Parse this movie script and extract every line of dialogue. Return a JSON array in this exact format:
+  const MAX_CHUNK_SIZE = 12000
+  const chunks = chunkText(scriptText, MAX_CHUNK_SIZE)
+  const allQuotes = []
+
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunkPrompt = `You are a movie script parser. This is part ${index + 1} of ${chunks.length} of the script for "${movieTitle}".
+Analyze only this part and extract every line of dialogue. Return a JSON array in this exact format:
 
 [
   {
@@ -60,26 +81,29 @@ Rules:
 5. Return ONLY valid JSON, no markdown or extra text
 6. If a character name is unclear, use "UNKNOWN"
 
-Script for "${movieTitle}":
-${scriptText}`
+Script part:
+${chunks[index]}`
 
-  try {
-    const result = await generateContentWithRetry(prompt)
-    const response = await result.response
-    const text = response.text()
-    
-    // Clean the response to extract JSON
-    const jsonMatch = text.match(/\[[\s\S]*\]/)
-    if (!jsonMatch) {
-      throw new Error('No JSON found in response')
+    try {
+      const result = await generateContentWithRetry(chunkPrompt)
+      const response = await result.response
+      const text = response.text()
+
+      // Clean the response to extract JSON
+      const jsonMatch = text.match(/\[[\s\S]*\]/)
+      if (!jsonMatch) {
+        throw new Error('No JSON found in response')
+      }
+
+      const quotes = JSON.parse(jsonMatch[0])
+      allQuotes.push(...quotes)
+    } catch (error) {
+      console.error(`Error parsing script chunk ${index + 1}:`, error)
+      throw error
     }
-    
-    const quotes = JSON.parse(jsonMatch[0])
-    return quotes
-  } catch (error) {
-    console.error('Error parsing script:', error)
-    throw error
   }
+
+  return allQuotes
 }
 
 // Get quote context
