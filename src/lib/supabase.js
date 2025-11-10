@@ -9,6 +9,12 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables. Please check your .env file and restart the dev server.')
 }
 
+if (supabaseUrl.includes('supabase.com/dashboard')) {
+  throw new Error(
+    'Invalid Supabase URL. Use the project API URL (https://<project-ref>.supabase.co), not the dashboard URL.'
+  )
+}
+
 // Log in development to help debug
 if (import.meta.env.DEV) {
   console.log('Connecting to Supabase:', supabaseUrl)

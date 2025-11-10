@@ -7,8 +7,8 @@ if (!apiKey) {
 }
 
 const genAI = new GoogleGenerativeAI(apiKey)
-// Using gemini-2.0-flash-exp (latest flash model) - can be changed to gemini-1.5-flash if needed
-export const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' })
+// Using gemini-2.5-flash per latest request
+export const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
 
 // Parse script and extract quotes with significance scores
 export async function parseScript(scriptText, movieTitle) {
