@@ -8,7 +8,36 @@ if (!apiKey) {
 
 const genAI = new GoogleGenerativeAI(apiKey)
 // Using gemini-2.5-flash per latest request
-export const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
+const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
+
+async function generateContentWithRetry(prompt, attempts = 3) {
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await model.generateContent(prompt)
+    } catch (error) {
+      lastError = error
+      const message = error?.message ?? ''
+      if (
+        attempt < attempts &&
+        (message.includes('overloaded') ||
+          message.includes('503') ||
+          message.includes('Service Unavailable'))
+      ) {
+        const waitMs = 1000 * attempt
+        console.warn(
+          `Gemini request overloaded (attempt ${attempt}/${attempts}). Retrying in ${waitMs}ms...`
+        )
+        await new Promise((resolve) => setTimeout(resolve, waitMs))
+        continue
+      }
+      break
+    }
+  }
+  throw lastError
+}
+
+export { model }
 
 // Parse script and extract quotes with significance scores
 export async function parseScript(scriptText, movieTitle) {
@@ -35,7 +64,7 @@ Script for "${movieTitle}":
 ${scriptText}`
 
   try {
-    const result = await model.generateContent(prompt)
+    const result = await generateContentWithRetry(prompt)
     const response = await result.response
     const text = response.text()
     
@@ -60,7 +89,7 @@ export async function getQuoteContext(quote, scriptText) {
 Return the 2-3 lines of dialogue or action that came immediately before this quote. Format as a simple text response, no JSON.`
 
   try {
-    const result = await model.generateContent(prompt + '\n\nScript:\n' + scriptText)
+    const result = await generateContentWithRetry(prompt + '\n\nScript:\n' + scriptText)
     const response = await result.response
     return response.text()
   } catch (error) {
@@ -87,7 +116,7 @@ Scripts:
 ${scripts.map(s => `Movie: ${s.title}\n${s.text}`).join('\n\n---\n\n')}`
 
   try {
-    const result = await model.generateContent(prompt)
+    const result = await generateContentWithRetry(prompt)
     const response = await result.response
     const text = response.text()
     
@@ -111,7 +140,7 @@ Script:
 ${scriptText}`
 
   try {
-    const result = await model.generateContent(prompt)
+    const result = await generateContentWithRetry(prompt)
     const response = await result.response
     return response.text()
   } catch (error) {
