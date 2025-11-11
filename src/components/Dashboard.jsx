@@ -58,7 +58,10 @@ export default function Dashboard() {
       setBrowserVoices(voices)
 
       // Load ElevenLabs voices if available
-      if (isElevenLabsAvailable()) {
+      const isAvailable = isElevenLabsAvailable()
+      console.log('ElevenLabs available:', isAvailable)
+      
+      if (isAvailable) {
         try {
           const elVoices = await getElevenLabsVoices()
           setElevenLabsVoices(elVoices)
@@ -68,6 +71,7 @@ export default function Dashboard() {
           setElevenLabsVoices(getCinematicVoices())
         }
       } else {
+        console.warn('ElevenLabs API key not found. Make sure VITE_ELEVEN_LABS_API_KEY is set in your .env file and restart the dev server.')
         setElevenLabsVoices(getCinematicVoices())
       }
     } catch (error) {
@@ -621,7 +625,9 @@ export default function Dashboard() {
                       <strong>ElevenLabs Premium Voices</strong>
                     </p>
                     <p className="text-xs text-slate-600 dark:text-slate-400">
-                      To enable premium voices, add <code className="text-xs bg-slate-200 dark:bg-slate-700 px-1 rounded">VITE_ELEVEN_LABS_API_KEY</code> to your environment variables.
+                      To enable premium voices, add <code className="text-xs bg-slate-200 dark:bg-slate-700 px-1 rounded">VITE_ELEVEN_LABS_API_KEY</code> to your <code className="text-xs bg-slate-200 dark:bg-slate-700 px-1 rounded">.env</code> file.
+                      <br />
+                      <strong>Important:</strong> Restart your dev server after adding the key!
                       <br />
                       Get your free API key at <a href="https://elevenlabs.io/" target="_blank" rel="noopener noreferrer" className="text-primary-600 dark:text-primary-400 underline">elevenlabs.io</a>
                     </p>

@@ -18,7 +18,17 @@ let currentAudio = null
  * Check if ElevenLabs is available and configured
  */
 export function isElevenLabsAvailable() {
-  return !!ELEVEN_LABS_API_KEY
+  const hasKey = !!ELEVEN_LABS_API_KEY
+  // Debug logging (only in development)
+  if (import.meta.env.DEV) {
+    console.log('ElevenLabs API Key Check:', {
+      hasKey,
+      keyLength: ELEVEN_LABS_API_KEY?.length || 0,
+      keyPrefix: ELEVEN_LABS_API_KEY?.substring(0, 10) || 'none',
+      envVar: import.meta.env.VITE_ELEVEN_LABS_API_KEY ? 'present' : 'missing'
+    })
+  }
+  return hasKey
 }
 
 /**
