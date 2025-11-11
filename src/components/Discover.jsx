@@ -32,7 +32,12 @@ export default function Discover() {
 
     setLoading(true)
     try {
-      const quotes = await searchThemes(theme, movies)
+      // Transform movies to match the format expected by searchThemes
+      const scripts = movies.map(m => ({
+        title: m.title,
+        text: m.script_text || ''
+      }))
+      const quotes = await searchThemes(theme, scripts)
       setResults(quotes)
     } catch (error) {
       console.error('Error searching themes:', error)

@@ -57,23 +57,28 @@ ALTER TABLE daily_quotes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_settings ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for movies
+DROP POLICY IF EXISTS "Users can view their own movies" ON movies;
 CREATE POLICY "Users can view their own movies"
   ON movies FOR SELECT
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert their own movies" ON movies;
 CREATE POLICY "Users can insert their own movies"
   ON movies FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update their own movies" ON movies;
 CREATE POLICY "Users can update their own movies"
   ON movies FOR UPDATE
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete their own movies" ON movies;
 CREATE POLICY "Users can delete their own movies"
   ON movies FOR DELETE
   USING (auth.uid() = user_id);
 
 -- RLS Policies for quotes
+DROP POLICY IF EXISTS "Users can view quotes from their movies" ON quotes;
 CREATE POLICY "Users can view quotes from their movies"
   ON quotes FOR SELECT
   USING (
@@ -84,6 +89,7 @@ CREATE POLICY "Users can view quotes from their movies"
     )
   );
 
+DROP POLICY IF EXISTS "Users can insert quotes for their movies" ON quotes;
 CREATE POLICY "Users can insert quotes for their movies"
   ON quotes FOR INSERT
   WITH CHECK (
@@ -95,23 +101,28 @@ CREATE POLICY "Users can insert quotes for their movies"
   );
 
 -- RLS Policies for daily_quotes
+DROP POLICY IF EXISTS "Users can view their own daily quotes" ON daily_quotes;
 CREATE POLICY "Users can view their own daily quotes"
   ON daily_quotes FOR SELECT
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert their own daily quotes" ON daily_quotes;
 CREATE POLICY "Users can insert their own daily quotes"
   ON daily_quotes FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
 -- RLS Policies for user_settings
+DROP POLICY IF EXISTS "Users can view their own settings" ON user_settings;
 CREATE POLICY "Users can view their own settings"
   ON user_settings FOR SELECT
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert their own settings" ON user_settings;
 CREATE POLICY "Users can insert their own settings"
   ON user_settings FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update their own settings" ON user_settings;
 CREATE POLICY "Users can update their own settings"
   ON user_settings FOR UPDATE
   USING (auth.uid() = user_id);
@@ -126,9 +137,11 @@ END;
 $$ language 'plpgsql';
 
 -- Triggers for updated_at
+DROP TRIGGER IF EXISTS update_movies_updated_at ON movies;
 CREATE TRIGGER update_movies_updated_at BEFORE UPDATE ON movies
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_user_settings_updated_at ON user_settings;
 CREATE TRIGGER update_user_settings_updated_at BEFORE UPDATE ON user_settings
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 

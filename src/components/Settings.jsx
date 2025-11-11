@@ -18,7 +18,7 @@ export default function Settings() {
         .from('user_settings')
         .select('schedule_time')
         .eq('user_id', user.id)
-        .single()
+        .maybeSingle()
 
       if (data?.schedule_time) {
         setScheduleTime(data.schedule_time)

@@ -20,5 +20,13 @@ if (import.meta.env.DEV) {
   console.log('Connecting to Supabase:', supabaseUrl)
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+  },
+  db: {
+    schema: 'public',
+  },
+})
 

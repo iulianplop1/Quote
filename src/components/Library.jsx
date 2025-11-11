@@ -1,9 +1,29 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
-import { Plus, Trash2, Upload, Link as LinkIcon, Loader2 } from 'lucide-react'
+import { Plus, Trash2, Upload, Link as LinkIcon, Loader2, Quote, X, Volume2, VolumeX, Pause, Play, Settings, PlayCircle } from 'lucide-react'
 import { parseScript } from '../lib/gemini'
 import { fetchScriptFromUrl } from '../lib/scriptFetcher'
 import { getMoviePoster } from '../lib/tmdb'
+import { 
+  speakQuote, 
+  pauseSpeaking, 
+  resumeSpeaking, 
+  stopSpeaking, 
+  isSpeaking, 
+  isPaused, 
+  initializeSpeechSynthesis,
+  addQuotesToQueue,
+  clearQueue,
+  playQuoteQueue,
+  stopQueue,
+  isQueuePlaying,
+  setTTSSettings,
+  getTTSSettings,
+  getAvailableVoices,
+  getElevenLabsVoices,
+  getCinematicVoices,
+  isElevenLabsAvailable,
+} from '../lib/textToSpeech'
 
 export default function Library() {
   const [movies, setMovies] = useState([])
@@ -14,10 +34,102 @@ export default function Library() {
   const [scriptUrl, setScriptUrl] = useState('')
   const [scriptFile, setScriptFile] = useState(null)
   const [processing, setProcessing] = useState(false)
+  const [processingProgress, setProcessingProgress] = useState(null)
+  const [selectedMovie, setSelectedMovie] = useState(null)
+  const [movieQuotes, setMovieQuotes] = useState([])
+  const [loadingQuotes, setLoadingQuotes] = useState(false)
+  const [playingQuoteId, setPlayingQuoteId] = useState(null)
+  const [isPausedState, setIsPausedState] = useState(false)
+  const [isPlayingAll, setIsPlayingAll] = useState(false)
+  const [currentQueueIndex, setCurrentQueueIndex] = useState(0)
+  const [showTTSSettings, setShowTTSSettings] = useState(false)
+  const [ttsSettings, setTtsSettingsState] = useState(getTTSSettings())
+  const [elevenLabsVoices, setElevenLabsVoices] = useState([])
+  const [browserVoices, setBrowserVoices] = useState([])
+  const [loadingVoices, setLoadingVoices] = useState(false)
 
   useEffect(() => {
     loadMovies()
+    initializeSpeechSynthesis()
+    loadVoices()
+
+    // Cleanup: stop speech when component unmounts
+    return () => {
+      stopSpeaking()
+      stopQueue()
+    }
   }, [])
+
+  const loadVoices = async () => {
+    setLoadingVoices(true)
+    try {
+      // Load browser voices
+      const voices = getAvailableVoices()
+      setBrowserVoices(voices)
+
+      // Load ElevenLabs voices if available
+      if (isElevenLabsAvailable()) {
+        try {
+          const elVoices = await getElevenLabsVoices()
+          setElevenLabsVoices(elVoices)
+        } catch (error) {
+          console.error('Error loading ElevenLabs voices:', error)
+          // Fallback to cinematic voices
+          setElevenLabsVoices(getCinematicVoices())
+        }
+      } else {
+        setElevenLabsVoices(getCinematicVoices())
+      }
+    } catch (error) {
+      console.error('Error loading voices:', error)
+    } finally {
+      setLoadingVoices(false)
+    }
+  }
+
+  const handleTTSSettingsChange = (key, value) => {
+    const newSettings = { ...ttsSettings, [key]: value }
+    setTtsSettingsState(newSettings)
+    setTTSSettings(newSettings)
+  }
+
+  const handlePlayAll = async () => {
+    if (isPlayingAll) {
+      stopQueue()
+      setIsPlayingAll(false)
+      setCurrentQueueIndex(0)
+      return
+    }
+
+    if (movieQuotes.length === 0) return
+
+    // Clear any existing queue and add all quotes
+    clearQueue()
+    addQuotesToQueue(movieQuotes)
+    setIsPlayingAll(true)
+    setCurrentQueueIndex(0)
+
+    await playQuoteQueue(
+      (current, total, quote) => {
+        // On progress - update UI
+        setCurrentQueueIndex(current)
+        setPlayingQuoteId(quote.id)
+      },
+      () => {
+        // On complete
+        setIsPlayingAll(false)
+        setCurrentQueueIndex(0)
+        setPlayingQuoteId(null)
+      },
+      (error) => {
+        // On error
+        console.error('Error playing queue:', error)
+        setIsPlayingAll(false)
+        setCurrentQueueIndex(0)
+        setPlayingQuoteId(null)
+      }
+    )
+  }
 
   const loadMovies = async () => {
     try {
@@ -62,8 +174,18 @@ export default function Library() {
         scriptText = await scriptFile.text()
       }
 
-      // Parse script with Gemini
-      const quotes = await parseScript(scriptText, movieTitle)
+      // Parse script with Gemini (with progress feedback)
+      setProcessingProgress({ current: 0, total: 0, message: 'Parsing script...' })
+      const quotes = await parseScript(scriptText, movieTitle, (current, total) => {
+        setProcessingProgress({ current, total, message: `Processing script part ${current} of ${total}...` })
+      })
+      
+      if (!quotes || quotes.length === 0) {
+        throw new Error('No quotes were extracted from the script. Please check the script format.')
+      }
+      
+      console.log(`Extracted ${quotes.length} quotes from script`)
+      setProcessingProgress({ current: 1, total: 1, message: `Saving ${quotes.length} quotes to database...` })
 
       // Get movie poster
       const posterUrl = await getMoviePoster(movieTitle)
@@ -85,24 +207,69 @@ export default function Library() {
 
       if (movieError) throw movieError
 
-      // Insert quotes
-      const quotesToInsert = quotes.map(q => ({
+      // Filter quotes by significance - only keep high-quality quotes (significance >= 7)
+      // This ensures we only store memorable, meaningful quotes
+      const highQualityQuotes = quotes.filter(q => {
+        const significance = q.significance || 5
+        const quoteText = (q.quote || '').trim()
+        // Only keep quotes with significance >= 7 and meaningful content
+        return significance >= 7 && quoteText.length > 10 && quoteText.length < 500
+      })
+
+      let quotesToSave = []
+      if (highQualityQuotes.length === 0) {
+        console.warn('No high-quality quotes found (significance >= 7). All quotes:', quotes.length)
+        // If no high-quality quotes, keep the top 20% by significance as fallback
+        const sortedQuotes = [...quotes].sort((a, b) => (b.significance || 5) - (a.significance || 5))
+        quotesToSave = sortedQuotes.slice(0, Math.max(10, Math.floor(quotes.length * 0.2)))
+        if (quotesToSave.length === 0) {
+          throw new Error('No valid quotes to save. The script may not contain memorable dialogue.')
+        }
+        console.log(`Using fallback: saving top ${quotesToSave.length} quotes by significance`)
+      } else {
+        console.log(`Filtered to ${highQualityQuotes.length} high-quality quotes (significance >= 7) out of ${quotes.length} total`)
+        quotesToSave = highQualityQuotes
+      }
+
+      // Insert quotes in batches to avoid timeout issues
+      const BATCH_SIZE = 100
+      const quotesToInsert = quotesToSave.map(q => ({
         movie_id: movie.id,
-        character: q.character,
-        quote: q.quote,
+        character: q.character || 'UNKNOWN',
+        quote: q.quote || '',
         significance: q.significance || 5,
-      }))
+      })).filter(q => q.quote.trim().length > 0) // Filter out empty quotes
 
-      const { error: quotesError } = await supabase
-        .from('quotes')
-        .insert(quotesToInsert)
+      if (quotesToInsert.length === 0) {
+        throw new Error('No valid quotes to save after filtering')
+      }
 
-      if (quotesError) throw quotesError
+      // Insert in batches
+      for (let i = 0; i < quotesToInsert.length; i += BATCH_SIZE) {
+        const batch = quotesToInsert.slice(i, i + BATCH_SIZE)
+        const { error: quotesError } = await supabase
+          .from('quotes')
+          .insert(batch)
+
+        if (quotesError) {
+          console.error(`Error inserting quotes batch ${Math.floor(i / BATCH_SIZE) + 1}:`, quotesError)
+          throw quotesError
+        }
+        
+        setProcessingProgress({
+          current: Math.min(i + BATCH_SIZE, quotesToInsert.length),
+          total: quotesToInsert.length,
+          message: `Saving quotes ${Math.min(i + BATCH_SIZE, quotesToInsert.length)} / ${quotesToInsert.length}...`
+        })
+      }
+      
+      console.log(`Successfully saved ${quotesToInsert.length} quotes to database`)
 
       // Reset form and reload
       setMovieTitle('')
       setScriptUrl('')
       setScriptFile(null)
+      setProcessingProgress(null)
       setShowAddModal(false)
       loadMovies()
     } catch (error) {
@@ -110,6 +277,7 @@ export default function Library() {
       alert('Error adding movie: ' + error.message)
     } finally {
       setProcessing(false)
+      setProcessingProgress(null)
     }
   }
 
@@ -127,11 +295,93 @@ export default function Library() {
       
       if (error) throw error
       
+      // Close quotes modal if open for this movie
+      if (selectedMovie?.id === movieId) {
+        setSelectedMovie(null)
+        setMovieQuotes([])
+      }
+      
       loadMovies()
     } catch (error) {
       console.error('Error deleting movie:', error)
       alert('Error deleting movie: ' + error.message)
     }
+  }
+
+  const handleViewQuotes = async (movie) => {
+    // Stop any currently playing quote
+    stopSpeaking()
+    setPlayingQuoteId(null)
+    setIsPausedState(false)
+    
+    setSelectedMovie(movie)
+    setLoadingQuotes(true)
+    try {
+      const { data: quotes, error } = await supabase
+        .from('quotes')
+        .select('*')
+        .eq('movie_id', movie.id)
+        .order('significance', { ascending: false })
+        .order('created_at', { ascending: true })
+
+      if (error) throw error
+      setMovieQuotes(quotes || [])
+    } catch (error) {
+      console.error('Error loading quotes:', error)
+      alert('Error loading quotes: ' + error.message)
+    } finally {
+      setLoadingQuotes(false)
+    }
+  }
+
+  const handlePlayQuote = async (quote) => {
+    const quoteText = `"${quote.quote}"`
+    const characterText = quote.character ? ` by ${quote.character}` : ''
+    const fullText = `${quoteText}${characterText}`
+
+    // If this quote is already playing, pause/resume it
+    if (playingQuoteId === quote.id) {
+      if (isPausedState) {
+        resumeSpeaking()
+        setIsPausedState(false)
+      } else if (isSpeaking()) {
+        pauseSpeaking()
+        setIsPausedState(true)
+      }
+      return
+    }
+
+    // Stop any other quote and play this one
+    stopSpeaking()
+    setPlayingQuoteId(quote.id)
+    setIsPausedState(false)
+
+    try {
+      await speakQuote(
+        fullText,
+        () => {
+          // On end
+          setPlayingQuoteId(null)
+          setIsPausedState(false)
+        },
+        (error) => {
+          // On error
+          console.error('Error playing quote:', error)
+          setPlayingQuoteId(null)
+          setIsPausedState(false)
+        }
+      )
+    } catch (error) {
+      console.error('Error starting playback:', error)
+      setPlayingQuoteId(null)
+      setIsPausedState(false)
+    }
+  }
+
+  const handleStopQuote = () => {
+    stopSpeaking()
+    setPlayingQuoteId(null)
+    setIsPausedState(false)
   }
 
   if (loading) {
@@ -193,11 +443,205 @@ export default function Library() {
               <h3 className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-2">
                 {movie.title}
               </h3>
-              <p className="text-sm text-slate-600 dark:text-slate-400">
+              <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
                 Added {new Date(movie.created_at).toLocaleDateString()}
               </p>
+              <button
+                onClick={() => handleViewQuotes(movie)}
+                className="btn-secondary w-full flex items-center justify-center space-x-2"
+              >
+                <Quote size={18} />
+                <span>View Quotes</span>
+              </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Quotes Modal */}
+      {selectedMovie && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="card max-w-4xl w-full max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
+                  Quotes from {selectedMovie.title}
+                </h2>
+                <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+                  {movieQuotes.length} {movieQuotes.length === 1 ? 'quote' : 'quotes'} found
+                  {isPlayingAll && ` • Playing ${currentQueueIndex} of ${movieQuotes.length}`}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {movieQuotes.length > 0 && (
+                  <button
+                    onClick={handlePlayAll}
+                    className="btn-primary flex items-center space-x-2"
+                    title={isPlayingAll ? 'Stop playing all' : 'Play all quotes'}
+                  >
+                    <PlayCircle size={18} />
+                    <span>{isPlayingAll ? 'Stop All' : 'Play All'}</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowTTSSettings(!showTTSSettings)}
+                  className="btn-secondary flex items-center space-x-2"
+                  title="TTS Settings"
+                >
+                  <Settings size={18} />
+                </button>
+                <button
+                  onClick={() => {
+                    stopSpeaking()
+                    stopQueue()
+                    setSelectedMovie(null)
+                    setMovieQuotes([])
+                    setPlayingQuoteId(null)
+                    setIsPausedState(false)
+                    setIsPlayingAll(false)
+                    setCurrentQueueIndex(0)
+                  }}
+                  className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+            </div>
+
+            {showTTSSettings && (
+              <div className="mb-4 p-4 bg-slate-50 dark:bg-slate-700 rounded-lg border border-slate-200 dark:border-slate-600 space-y-4">
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100">Voice & Speed Settings</h3>
+                
+                {/* Speed Control */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Speed: {ttsSettings.speed.toFixed(2)}x
+                  </label>
+                  <input
+                    type="range"
+                    min="0.25"
+                    max="2"
+                    step="0.05"
+                    value={ttsSettings.speed}
+                    onChange={(e) => handleTTSSettingsChange('speed', parseFloat(e.target.value))}
+                    className="w-full"
+                  />
+                  <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    <span>0.25x</span>
+                    <span>1.0x</span>
+                    <span>2.0x</span>
+                  </div>
+                </div>
+
+                {/* Voice Selection */}
+                {isElevenLabsAvailable() && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                      ElevenLabs Voice
+                    </label>
+                    <select
+                      value={ttsSettings.voiceId || ''}
+                      onChange={(e) => handleTTSSettingsChange('voiceId', e.target.value || null)}
+                      className="input-field"
+                      disabled={loadingVoices}
+                    >
+                      <option value="">Default (Josh)</option>
+                      {elevenLabsVoices.map((voice) => (
+                        <option key={voice.voice_id || voice.id} value={voice.voice_id || voice.id}>
+                          {voice.name} {voice.description ? `- ${voice.description}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Browser Voice Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Browser Voice (Fallback)
+                  </label>
+                  <select
+                    value={ttsSettings.browserVoice || ''}
+                    onChange={(e) => handleTTSSettingsChange('browserVoice', e.target.value || null)}
+                    className="input-field"
+                    disabled={loadingVoices}
+                  >
+                    <option value="">Auto-select best voice</option>
+                    {browserVoices.map((voice, index) => (
+                      <option key={index} value={voice.name}>
+                        {voice.name} {voice.lang ? `(${voice.lang})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto pr-2">
+              {loadingQuotes ? (
+                <div className="text-center py-12">
+                  <Loader2 className="animate-spin mx-auto mb-4" size={32} />
+                  <p className="text-slate-600 dark:text-slate-400">Loading quotes...</p>
+                </div>
+              ) : movieQuotes.length === 0 ? (
+                <div className="text-center py-12">
+                  <Quote className="mx-auto mb-4 text-slate-400" size={48} />
+                  <p className="text-slate-600 dark:text-slate-400">No quotes found for this movie.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {movieQuotes.map((quote, index) => {
+                    const isPlaying = playingQuoteId === quote.id
+                    const isPaused = isPlaying && isPausedState
+                    
+                    return (
+                      <div
+                        key={quote.id}
+                        className="p-4 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="text-lg text-slate-900 dark:text-slate-100 mb-2">
+                              "{quote.quote}"
+                            </div>
+                            <div className="flex items-center space-x-4 text-sm text-slate-600 dark:text-slate-400">
+                              <span className="font-medium">{quote.character}</span>
+                              <span>•</span>
+                              <span>Significance: {quote.significance}/10</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handlePlayQuote(quote)}
+                              className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                              title={isPlaying ? (isPaused ? 'Resume' : 'Pause') : 'Listen to quote'}
+                            >
+                              {isPaused ? (
+                                <Play size={18} className="text-primary-600 dark:text-primary-400" />
+                              ) : isPlaying ? (
+                                <Pause size={18} className="text-primary-600 dark:text-primary-400" />
+                              ) : (
+                                <Volume2 size={18} className="text-slate-600 dark:text-slate-400" />
+                              )}
+                            </button>
+                            {isPlaying && (
+                              <button
+                                onClick={handleStopQuote}
+                                className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                                title="Stop"
+                              >
+                                <VolumeX size={18} className="text-slate-600 dark:text-slate-400" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -284,6 +728,7 @@ export default function Library() {
                     setMovieTitle('')
                     setScriptUrl('')
                     setScriptFile(null)
+                    setProcessingProgress(null)
                   }}
                   className="btn-secondary flex-1"
                   disabled={processing}
@@ -299,6 +744,31 @@ export default function Library() {
                   <span>{processing ? 'Processing...' : 'Add Movie'}</span>
                 </button>
               </div>
+
+              {processingProgress && (
+                <div className="mt-4 p-4 bg-slate-50 dark:bg-slate-700 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                      {processingProgress.message}
+                    </span>
+                    {processingProgress.total > 0 && (
+                      <span className="text-sm text-slate-600 dark:text-slate-400">
+                        {processingProgress.current} / {processingProgress.total}
+                      </span>
+                    )}
+                  </div>
+                  {processingProgress.total > 0 && (
+                    <div className="w-full bg-slate-200 dark:bg-slate-600 rounded-full h-2">
+                      <div
+                        className="bg-primary-500 h-2 rounded-full transition-all duration-300"
+                        style={{
+                          width: `${(processingProgress.current / processingProgress.total) * 100}%`,
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

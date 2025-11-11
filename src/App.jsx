@@ -41,7 +41,13 @@ function App() {
   const basename = import.meta.env.MODE === 'production' ? '/Quote' : ''
 
   return (
-    <Router basename={basename}>
+    <Router 
+      basename={basename}
+      future={{
+        v7_startTransition: true,
+        v7_relativeSplatPath: true,
+      }}
+    >
       <Routes>
         <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
         <Route
