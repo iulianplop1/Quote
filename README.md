@@ -54,6 +54,8 @@ VITE_SUPABASE_URL=your_supabase_project_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 VITE_GEMINI_API_KEY=your_gemini_api_key
 VITE_TMDB_API_KEY=your_tmdb_api_key  # Optional
+VITE_ELEVEN_LABS_API_KEY=your_elevenlabs_api_key  # Optional - for premium TTS voices
+VITE_ELEVEN_LABS_VOICE_ID=TxGEqnHWrfWFTfGW9XjX  # Optional - defaults to Josh
 ```
 
 ### 5. Deploy Supabase Edge Function
@@ -116,8 +118,26 @@ npm run build
 
 1. Update `vite.config.js` with your repository name (if different from "Quote")
 2. Install GitHub Pages deploy plugin or use GitHub Actions
-3. Push to your repository
-4. Enable GitHub Pages in repository settings
+3. **Set Environment Variables**: 
+   - For GitHub Pages, you'll need to set environment variables in your deployment platform
+   - If using GitHub Actions, add secrets in Settings > Secrets and variables > Actions
+   - If using Vercel/Netlify, add environment variables in their dashboard
+   - **Important**: The `.env` file is not committed to Git for security
+4. Push to your repository
+5. Enable GitHub Pages in repository settings
+
+### 10. Setting Up ElevenLabs (Optional)
+
+ElevenLabs provides premium text-to-speech voices. To enable:
+
+1. Sign up at [elevenlabs.io](https://elevenlabs.io/) (free tier available)
+2. Get your API key from your account settings
+3. Add `VITE_ELEVEN_LABS_API_KEY` to your environment variables
+4. **For local development**: Add to your `.env` file
+5. **For deployment**: Add as an environment variable in your hosting platform
+6. Restart your dev server or redeploy
+
+**Note**: Without the ElevenLabs API key, the app will automatically use browser TTS as a fallback. The UI will show a helpful message explaining how to enable premium voices.
 
 ## Project Structure
 
@@ -162,6 +182,9 @@ Quote/
 - **Gemini API**: Get from [Google AI Studio](https://makersuite.google.com/app/apikey)
 - **TMDB API**: Get from [The Movie Database](https://www.themoviedb.org/settings/api) (optional)
 - **Supabase**: Get from your Supabase project settings
+- **ElevenLabs API**: Get from [ElevenLabs](https://elevenlabs.io/) (optional - for premium text-to-speech voices)
+  - Free tier includes 10,000 characters per month
+  - Without this key, the app will use browser TTS as fallback
 
 ## License
 

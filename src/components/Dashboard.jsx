@@ -596,7 +596,7 @@ export default function Dashboard() {
                 </div>
 
                 {/* Voice Selection */}
-                {isElevenLabsAvailable() && (
+                {isElevenLabsAvailable() ? (
                   <div>
                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                       ElevenLabs Voice
@@ -614,6 +614,17 @@ export default function Dashboard() {
                         </option>
                       ))}
                     </select>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-slate-100 dark:bg-slate-600 rounded-lg border border-slate-200 dark:border-slate-500">
+                    <p className="text-sm text-slate-700 dark:text-slate-300 mb-1">
+                      <strong>ElevenLabs Premium Voices</strong>
+                    </p>
+                    <p className="text-xs text-slate-600 dark:text-slate-400">
+                      To enable premium voices, add <code className="text-xs bg-slate-200 dark:bg-slate-700 px-1 rounded">VITE_ELEVEN_LABS_API_KEY</code> to your environment variables.
+                      <br />
+                      Get your free API key at <a href="https://elevenlabs.io/" target="_blank" rel="noopener noreferrer" className="text-primary-600 dark:text-primary-400 underline">elevenlabs.io</a>
+                    </p>
                   </div>
                 )}
 
