@@ -21,6 +21,7 @@ The app is configured to work with a repository named **"Quote"**. If your repos
    - `VITE_SUPABASE_ANON_KEY`
    - `VITE_GEMINI_API_KEY`
    - `VITE_TMDB_API_KEY` (optional)
+   - `VITE_ELEVEN_LABS_API_KEY` (optional - for premium TTS voices)
 
 2. **Enable GitHub Pages**:
    - Go to Settings > Pages
