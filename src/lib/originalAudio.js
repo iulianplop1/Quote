@@ -206,7 +206,9 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
   if (audioUrl && audioUrl.startsWith('data:local-audio:')) {
     const content = audioUrl.substring('data:local-audio:'.length)
     if (content === 'stored') {
-      onError?.(new Error('Audio content marker found but actual content is missing. Please re-upload your audio file.'))
+      // This shouldn't happen if getMovieMediaConfigLocal worked correctly
+      // But if it does, provide a helpful error
+      onError?.(new Error('Audio file content is missing. The audio file may have been cleared from storage. Please re-upload your audio file in the media settings.'))
       return () => {}
     }
     // The content should be a data URL (data:audio/mpeg;base64,...)

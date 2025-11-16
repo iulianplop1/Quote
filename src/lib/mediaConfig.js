@@ -143,6 +143,28 @@ export async function getMovieMediaConfigPersisted(movieId) {
           cfg.srtUrl = ''
         }
       }
+      
+      // If audioUrl is a marker for local storage, load it from localStorage/IndexedDB
+      if (cfg.audioUrl === LOCAL_AUDIO_PREFIX + 'stored' || 
+          (isLocalAudioContent(cfg.audioUrl) && getLocalAudioContent(cfg.audioUrl) === 'stored')) {
+        const storageKey = LS_AUDIO_PREFIX + movieId
+        const useIndexedDB = localStorage.getItem(storageKey + '-idb') === 'true'
+        
+        let localAudioContent = null
+        if (useIndexedDB) {
+          localAudioContent = await getAudioFromIndexedDB(storageKey)
+        } else {
+          localAudioContent = localStorage.getItem(storageKey)
+        }
+        
+        if (localAudioContent) {
+          cfg.audioUrl = createLocalAudioUrl(localAudioContent)
+        } else {
+          console.warn(`Local audio content not found for movie ${movieId} from Supabase`)
+          cfg.audioUrl = ''
+        }
+      }
+      
       // Cache to localStorage too
       await setMovieMediaConfigLocal(movieId, cfg)
       return cfg
@@ -327,10 +349,24 @@ export async function getMovieMediaConfigLocal(movieId) {
         localAudioContent = localStorage.getItem(storageKey)
       }
       
-      if (localAudioContent && localAudioContent.trim && localAudioContent.trim()) {
-        cfg.audioUrl = createLocalAudioUrl(localAudioContent)
-      } else if (localAudioContent) {
-        cfg.audioUrl = createLocalAudioUrl(localAudioContent)
+      // Check if content exists and is valid
+      if (localAudioContent) {
+        // For IndexedDB, content might not have trim method, so check differently
+        if (typeof localAudioContent === 'string') {
+          if (localAudioContent.trim && localAudioContent.trim()) {
+            cfg.audioUrl = createLocalAudioUrl(localAudioContent)
+          } else if (localAudioContent.length > 0) {
+            // Even if trim() returns empty, if it has length, it might be valid (could be base64)
+            cfg.audioUrl = createLocalAudioUrl(localAudioContent)
+          } else {
+            console.warn(`Local audio content is empty for movie ${movieId}`)
+            cfg.audioUrl = ''
+          }
+        } else {
+          // If it's not a string, it might be a Blob or other type - try to use it
+          console.warn(`Local audio content is not a string for movie ${movieId}, type: ${typeof localAudioContent}`)
+          cfg.audioUrl = ''
+        }
       } else {
         console.warn(`Local audio content not found for movie ${movieId}`)
         cfg.audioUrl = ''
@@ -348,10 +384,23 @@ export async function getMovieMediaConfigLocal(movieId) {
           localAudioContent = localStorage.getItem(storageKey)
         }
         
-        if (localAudioContent && localAudioContent.trim && localAudioContent.trim()) {
-          cfg.audioUrl = createLocalAudioUrl(localAudioContent)
-        } else if (localAudioContent) {
-          cfg.audioUrl = createLocalAudioUrl(localAudioContent)
+        // Check if content exists and is valid
+        if (localAudioContent) {
+          // For IndexedDB, content might not have trim method, so check differently
+          if (typeof localAudioContent === 'string') {
+            if (localAudioContent.trim && localAudioContent.trim()) {
+              cfg.audioUrl = createLocalAudioUrl(localAudioContent)
+            } else if (localAudioContent.length > 0) {
+              // Even if trim() returns empty, if it has length, it might be valid (could be base64)
+              cfg.audioUrl = createLocalAudioUrl(localAudioContent)
+            } else {
+              cfg.audioUrl = ''
+            }
+          } else {
+            // If it's not a string, it might be a Blob or other type - try to use it
+            console.warn(`Local audio content is not a string for movie ${movieId}, type: ${typeof localAudioContent}`)
+            cfg.audioUrl = ''
+          }
         } else {
           cfg.audioUrl = ''
         }
