@@ -26,6 +26,7 @@ import {
 } from '../lib/textToSpeech'
 import { playOriginalQuoteSegment } from '../lib/originalAudio'
 import { getMovieMediaConfigPersisted, setMovieMediaConfigPersisted, isLocalSrtContent, createLocalSrtUrl, getLocalSrtContent } from '../lib/mediaConfig'
+import { extractVideoUrlFromPage } from '../lib/videoUrlExtractor'
 
 export default function Library() {
   const [movies, setMovies] = useState([])
@@ -53,6 +54,7 @@ export default function Library() {
   const [mediaConfig, setMediaConfig] = useState({ videoUrl: '', srtUrl: '' })
   const [srtMethod, setSrtMethod] = useState('url') // 'url' or 'file'
   const [srtFileName, setSrtFileName] = useState('')
+  const [extractingVideoUrl, setExtractingVideoUrl] = useState(false)
 
   useEffect(() => {
     loadMovies()
@@ -637,13 +639,63 @@ export default function Library() {
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                     Video URL (must end in .mp4 or .m3u8)
                   </label>
-                  <input
-                    type="text"
-                    value={mediaConfig.videoUrl || ''}
-                    onChange={(e) => setMediaConfig({ ...mediaConfig, videoUrl: e.target.value })}
-                    className="input-field"
-                    placeholder="https://example.com/video.m3u8"
-                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={mediaConfig.videoUrl || ''}
+                      onChange={(e) => setMediaConfig({ ...mediaConfig, videoUrl: e.target.value })}
+                      className="input-field flex-1"
+                      placeholder="https://example.com/video.m3u8 or https://example.com/watch/movie"
+                    />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const pageUrl = prompt('Enter the webpage URL where the video player is located:', '')
+                        if (!pageUrl) return
+                        
+                        setExtractingVideoUrl(true)
+                        try {
+                          const result = await extractVideoUrlFromPage(pageUrl)
+                          if (result.videoUrls.length > 0) {
+                            // If multiple URLs found, let user choose
+                            if (result.videoUrls.length > 1) {
+                              const urlList = result.videoUrls.map((url, i) => `${i + 1}. ${url}`).join('\n')
+                              const choice = prompt(
+                                `Found ${result.videoUrls.length} video URLs:\n\n${urlList}\n\nEnter the number of the URL you want to use (1-${result.videoUrls.length}):`,
+                                '1'
+                              )
+                              const index = parseInt(choice) - 1
+                              if (index >= 0 && index < result.videoUrls.length) {
+                                setMediaConfig({ ...mediaConfig, videoUrl: result.videoUrls[index] })
+                                alert(`Video URL extracted and set!`)
+                              } else {
+                                alert('Invalid selection. Using the first URL.')
+                                setMediaConfig({ ...mediaConfig, videoUrl: result.primaryUrl })
+                              }
+                            } else {
+                              setMediaConfig({ ...mediaConfig, videoUrl: result.primaryUrl })
+                              alert('Video URL extracted successfully!')
+                            }
+                          } else {
+                            alert('No video URLs found on that page.')
+                          }
+                        } catch (error) {
+                          console.error('Error extracting video URL:', error)
+                          alert(`Error: ${error.message}`)
+                        } finally {
+                          setExtractingVideoUrl(false)
+                        }
+                      }}
+                      disabled={extractingVideoUrl}
+                      className="btn-secondary whitespace-nowrap"
+                      title="Extract video URL from a webpage"
+                    >
+                      {extractingVideoUrl ? 'Extracting...' : 'Extract from Page'}
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    You can paste a direct video URL (.mp4 or .m3u8) or use "Extract from Page" to get the video URL from a player page.
+                  </p>
                 </div>
 
                 <div>
