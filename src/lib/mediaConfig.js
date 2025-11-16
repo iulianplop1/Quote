@@ -551,6 +551,7 @@ export async function setMovieMediaConfigLocal(movieId, { videoUrl, audioUrl, sr
         audioUrlToStore = LOCAL_AUDIO_PREFIX + 'stored'
       }
     }
+    }
   } else {
     const storageKey = LS_AUDIO_PREFIX + movieId
     localStorage.removeItem(storageKey)

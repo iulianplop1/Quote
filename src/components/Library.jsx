@@ -711,7 +711,6 @@ export default function Library() {
                         </p>
                       )}
                     </div>
-                  )}
                 </div>
 
 
@@ -812,7 +811,6 @@ export default function Library() {
                         </p>
                       )}
                     </div>
-                  )}
                 </div>
 
                 <div className="flex gap-2">
