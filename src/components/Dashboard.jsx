@@ -580,19 +580,14 @@ export default function Dashboard() {
                     try {
                       const movieId = todayQuote.quotes.movies.id
                       const cfg = await getMovieMediaConfigPersisted(movieId)
-                      let videoUrl = cfg.videoUrl
-                      let srtUrl = cfg.srtUrl
-                      if (!videoUrl || !srtUrl) {
-                        const inputVideo = prompt('Enter video URL for this movie (from your licensed source):', videoUrl || '')
-                        if (!inputVideo) return
-                        const inputSrt = prompt('Enter subtitles (SRT) URL for this movie:', srtUrl || '')
-                        if (!inputSrt) return
-                        videoUrl = inputVideo.trim()
-                        srtUrl = inputSrt.trim()
-                        await setMovieMediaConfigPersisted(movieId, { videoUrl, srtUrl })
+                      const audioUrl = cfg.audioUrl
+                      const srtUrl = cfg.srtUrl
+                      if (!audioUrl || !srtUrl) {
+                        alert('Audio file or subtitle file is not configured for this movie. Please configure them in the Library section.')
+                        return
                       }
                       const quoteText = `"${todayQuote.quotes.quote}"${todayQuote.quotes.character ? ` by ${todayQuote.quotes.character}` : ''}`
-                      await playOriginalQuoteSegment(quoteText, videoUrl, srtUrl, {
+                      await playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, {
                         onStart: () => {
                           setIsPlaying(true)
                           setIsPausedState(false)
@@ -604,7 +599,7 @@ export default function Dashboard() {
                         onError: (e) => {
                           console.error('Original clip playback error:', e)
                           const errorMsg = e?.message || 'Could not play original clip'
-                          alert(`Error: ${errorMsg}\n\nMake sure you're using:\n- Direct video URLs (ending in .mp4 or .m3u8), not page URLs\n- Direct SRT file URLs that allow CORS\n- Both URLs must be accessible from your browser`)
+                          alert(`Error: ${errorMsg}\n\nPlease ensure:\n- You have uploaded both an audio file and a subtitle file in the Library section\n- The subtitle file is a valid SRT format\n- The quote text matches the subtitle content`)
                           setIsPlaying(false)
                           setIsPausedState(false)
                         }

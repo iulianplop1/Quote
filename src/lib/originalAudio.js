@@ -579,16 +579,20 @@ export function playVideoSegment(videoUrl, startMs, endMs, { onStart, onEnd, onE
   }
 }
 
-// High-level: given quote text, video URL, and SRT URL, find timestamps and play segment
-export async function playOriginalQuoteSegment(quoteText, videoUrl, srtUrl, { onStart, onEnd, onError } = {}) {
+// High-level: given quote text, audio URL/file, and SRT URL/file, find timestamps and play audio segment
+export async function playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, { onStart, onEnd, onError } = {}) {
   try {
     if (!srtUrl) {
-      throw new Error('Subtitle URL or file is not configured. Please set up subtitles in the media settings.')
+      throw new Error('Subtitle file is not configured. Please upload a subtitle file in the media settings.')
+    }
+    
+    if (!audioUrl) {
+      throw new Error('Audio file is not configured. Please upload an audio file in the media settings.')
     }
     
     const srt = await fetchSrt(srtUrl)
     if (!srt || !srt.trim()) {
-      throw new Error('Subtitle file is empty. Please upload a valid SRT file or provide a valid subtitle URL.')
+      throw new Error('Subtitle file is empty. Please upload a valid SRT file.')
     }
     
     const entries = parseSrtToEntries(srt) // This will throw a helpful error if parsing fails
@@ -605,7 +609,9 @@ export async function playOriginalQuoteSegment(quoteText, videoUrl, srtUrl, { on
     // Pad a bit around the line for naturalness
     const startMs = Math.max(0, entries[index].startMs - 300)
     const endMs = entries[index].endMs + 300
-    return playVideoSegment(videoUrl, startMs, endMs, { onStart, onEnd, onError })
+    
+    // Play audio segment from the uploaded audio file
+    return playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onError })
   } catch (e) {
     onError && onError(e)
     throw e

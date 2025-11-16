@@ -26,7 +26,6 @@ import {
 } from '../lib/textToSpeech'
 import { playOriginalQuoteSegment } from '../lib/originalAudio'
 import { getMovieMediaConfigPersisted, setMovieMediaConfigPersisted, isLocalSrtContent, createLocalSrtUrl, getLocalSrtContent, isLocalAudioContent, createLocalAudioUrl, getLocalAudioContent } from '../lib/mediaConfig'
-import { extractVideoUrlFromPage } from '../lib/videoUrlExtractor'
 
 export default function Library() {
   const [movies, setMovies] = useState([])
@@ -52,10 +51,7 @@ export default function Library() {
   const [loadingVoices, setLoadingVoices] = useState(false)
   const [showMediaSettings, setShowMediaSettings] = useState(false)
   const [mediaConfig, setMediaConfig] = useState({ videoUrl: '', audioUrl: '', srtUrl: '' })
-  const [srtMethod, setSrtMethod] = useState('url') // 'url' or 'file'
   const [srtFileName, setSrtFileName] = useState('')
-  const [extractingVideoUrl, setExtractingVideoUrl] = useState(false)
-  const [audioMethod, setAudioMethod] = useState('url') // 'url' or 'file'
   const [audioFileName, setAudioFileName] = useState('')
 
   useEffect(() => {
@@ -331,14 +327,11 @@ export default function Library() {
     // Load media config for this movie
     const cfg = await getMovieMediaConfigPersisted(movie.id)
     setMediaConfig(cfg)
-    // Determine if subtitle is from URL or file
+    // Try to get filename from localStorage if available
     if (isLocalSrtContent(cfg.srtUrl)) {
-      setSrtMethod('file')
-      // Try to get filename from localStorage if available
       const storedFileName = localStorage.getItem(`movie-srt-filename-${movie.id}`)
       setSrtFileName(storedFileName || 'Uploaded file')
     } else {
-      setSrtMethod('url')
       setSrtFileName('')
     }
     setShowMediaSettings(false)
@@ -538,9 +531,7 @@ export default function Library() {
                     setCurrentQueueIndex(0)
                     setShowMediaSettings(false)
                     setMediaConfig({ videoUrl: '', audioUrl: '', srtUrl: '' })
-                    setSrtMethod('url')
                     setSrtFileName('')
-                    setAudioMethod('url')
                     setAudioFileName('')
                   }}
                   className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
@@ -634,55 +625,19 @@ export default function Library() {
 
             {showMediaSettings && (
               <div className="mb-4 p-4 bg-slate-50 dark:bg-slate-700 rounded-lg border border-slate-200 dark:border-slate-600 space-y-4">
-                <h3 className="font-semibold text-slate-900 dark:text-slate-100">Video & Subtitle URLs</h3>
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100">Audio & Subtitle Files</h3>
                 <p className="text-sm text-slate-600 dark:text-slate-400">
-                  Configure the video and subtitle URLs for playing original audio clips. These URLs are stored per movie.
+                  Upload an audio file and subtitle file. When you click a quote, the app will find the timestamps in the subtitle file and play the matching audio segment.
                 </p>
                 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Audio Source (optional - will be used if provided, otherwise video will be used)
+                    Audio File
                   </label>
-                  <div className="flex space-x-4 mb-3">
-                    <button
-                      onClick={() => {
-                        setAudioMethod('url')
-                        setMediaConfig({ ...mediaConfig, audioUrl: '' })
-                        setAudioFileName('')
-                      }}
-                      className={`flex-1 px-4 py-2 rounded-lg border-2 transition-colors ${
-                        audioMethod === 'url'
-                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                          : 'border-slate-300 dark:border-slate-600'
-                      }`}
-                    >
-                      URL
-                    </button>
-                    <button
-                      onClick={() => {
-                        setAudioMethod('file')
-                        setMediaConfig({ ...mediaConfig, audioUrl: '' })
-                      }}
-                      className={`flex-1 px-4 py-2 rounded-lg border-2 transition-colors ${
-                        audioMethod === 'file'
-                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                          : 'border-slate-300 dark:border-slate-600'
-                      }`}
-                    >
-                      Upload File
-                    </button>
-                  </div>
-                  
-                  {audioMethod === 'url' ? (
-                    <input
-                      type="text"
-                      value={isLocalAudioContent(mediaConfig.audioUrl) ? '' : (mediaConfig.audioUrl || '')}
-                      onChange={(e) => setMediaConfig({ ...mediaConfig, audioUrl: e.target.value })}
-                      className="input-field mb-2"
-                      placeholder="https://example.com/audio.mp3"
-                    />
-                  ) : (
-                    <div className="space-y-2 mb-2">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
+                    Upload an audio file. The app will play the audio segment matching the quote timestamps from the subtitle file.
+                  </p>
+                  <div className="space-y-2 mb-2">
                       <input
                         type="file"
                         accept=".mp3,.wav,.ogg,.m4a,.aac"
@@ -693,10 +648,10 @@ export default function Library() {
                           // Check file size (warn if > 10MB, but allow up to 50MB)
                           const maxRecommendedSize = 10 * 1024 * 1024 // 10MB
                           const maxSize = 50 * 1024 * 1024 // 50MB
-                          if (file.size > maxSize) {
-                            alert(`File is too large (${(file.size / 1024 / 1024).toFixed(2)}MB). Maximum size is ${(maxSize / 1024 / 1024).toFixed(0)}MB. Please use a smaller file or provide an audio URL.`)
-                            return
-                          }
+                            if (file.size > maxSize) {
+                              alert(`File is too large (${(file.size / 1024 / 1024).toFixed(2)}MB). Maximum size is ${(maxSize / 1024 / 1024).toFixed(0)}MB. Please use a smaller file.`)
+                              return
+                            }
                           if (file.size > maxRecommendedSize) {
                             const proceed = confirm(
                               `Warning: This file is large (${(file.size / 1024 / 1024).toFixed(2)}MB). ` +
@@ -727,7 +682,7 @@ export default function Library() {
                           } catch (error) {
                             console.error('Error reading audio file:', error)
                             if (error.name === 'QuotaExceededError') {
-                              alert('Error: The audio file is too large to store. Please use a smaller file or provide an audio URL instead.')
+                              alert('Error: The audio file is too large to store. Please use a smaller file.')
                             } else {
                               alert('Error reading audio file: ' + error.message)
                             }
@@ -749,113 +704,15 @@ export default function Library() {
                   )}
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Video URL (must end in .mp4 or .m3u8) - used if audio is not provided
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={mediaConfig.videoUrl || ''}
-                      onChange={(e) => setMediaConfig({ ...mediaConfig, videoUrl: e.target.value })}
-                      className="input-field flex-1"
-                      placeholder="https://example.com/video.m3u8 or https://example.com/watch/movie"
-                    />
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const pageUrl = prompt('Enter the webpage URL where the video player is located:', '')
-                        if (!pageUrl) return
-                        
-                        setExtractingVideoUrl(true)
-                        try {
-                          const result = await extractVideoUrlFromPage(pageUrl)
-                          if (result.videoUrls.length > 0) {
-                            // If multiple URLs found, let user choose
-                            if (result.videoUrls.length > 1) {
-                              const urlList = result.videoUrls.map((url, i) => `${i + 1}. ${url}`).join('\n')
-                              const choice = prompt(
-                                `Found ${result.videoUrls.length} video URLs:\n\n${urlList}\n\nEnter the number of the URL you want to use (1-${result.videoUrls.length}):`,
-                                '1'
-                              )
-                              const index = parseInt(choice) - 1
-                              if (index >= 0 && index < result.videoUrls.length) {
-                                setMediaConfig({ ...mediaConfig, videoUrl: result.videoUrls[index] })
-                                alert(`Video URL extracted and set!`)
-                              } else {
-                                alert('Invalid selection. Using the first URL.')
-                                setMediaConfig({ ...mediaConfig, videoUrl: result.primaryUrl })
-                              }
-                            } else {
-                              setMediaConfig({ ...mediaConfig, videoUrl: result.primaryUrl })
-                              alert('Video URL extracted successfully!')
-                            }
-                          } else {
-                            alert('No video URLs found on that page.')
-                          }
-                        } catch (error) {
-                          console.error('Error extracting video URL:', error)
-                          alert(`Error: ${error.message}`)
-                        } finally {
-                          setExtractingVideoUrl(false)
-                        }
-                      }}
-                      disabled={extractingVideoUrl}
-                      className="btn-secondary whitespace-nowrap"
-                      title="Extract video URL from a webpage"
-                    >
-                      {extractingVideoUrl ? 'Extracting...' : 'Extract from Page'}
-                    </button>
-                  </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                    You can paste a direct video URL (.mp4 or .m3u8) or use "Extract from Page" to get the video URL from a player page.
-                  </p>
-                </div>
 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Subtitle Source
+                    Subtitle File
                   </label>
-                  <div className="flex space-x-4 mb-3">
-                    <button
-                      onClick={() => {
-                        setSrtMethod('url')
-                        setMediaConfig({ ...mediaConfig, srtUrl: '' })
-                        setSrtFileName('')
-                      }}
-                      className={`flex-1 px-4 py-2 rounded-lg border-2 transition-colors ${
-                        srtMethod === 'url'
-                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                          : 'border-slate-300 dark:border-slate-600'
-                      }`}
-                    >
-                      URL
-                    </button>
-                    <button
-                      onClick={() => {
-                        setSrtMethod('file')
-                        setMediaConfig({ ...mediaConfig, srtUrl: '' })
-                      }}
-                      className={`flex-1 px-4 py-2 rounded-lg border-2 transition-colors ${
-                        srtMethod === 'file'
-                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-                          : 'border-slate-300 dark:border-slate-600'
-                      }`}
-                    >
-                      Upload File
-                    </button>
-                  </div>
-                  
-                  {srtMethod === 'url' ? (
-                    <input
-                      type="text"
-                      value={isLocalSrtContent(mediaConfig.srtUrl) ? '' : (mediaConfig.srtUrl || '')}
-                      onChange={(e) => setMediaConfig({ ...mediaConfig, srtUrl: e.target.value })}
-                      className="input-field"
-                      placeholder="https://example.com/subtitles.srt"
-                    />
-                  ) : (
-                    <div className="space-y-2">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
+                    Upload an SRT subtitle file. The app will find the quote timestamps in this file.
+                  </p>
+                  <div className="space-y-2">
                       <input
                         type="file"
                         accept=".srt,.txt"
@@ -941,25 +798,23 @@ export default function Library() {
                 <div className="flex gap-2">
                   <button
                     onClick={async () => {
-                      if (!mediaConfig.videoUrl && !mediaConfig.audioUrl) {
-                        alert('Please enter either a video URL or upload an audio file')
+                      if (!mediaConfig.audioUrl) {
+                        alert('Please upload an audio file')
                         return
                       }
                       if (!mediaConfig.srtUrl) {
-                        alert(srtMethod === 'url' 
-                          ? 'Please enter a subtitle URL or upload a file' 
-                          : 'Please upload a subtitle file')
+                        alert('Please upload a subtitle file')
                         return
                       }
                       try {
                         await setMovieMediaConfigPersisted(selectedMovie.id, {
-                          videoUrl: (mediaConfig.videoUrl || '').trim(),
+                          videoUrl: '', // No longer used
                           audioUrl: isLocalAudioContent(mediaConfig.audioUrl)
                             ? mediaConfig.audioUrl
-                            : (mediaConfig.audioUrl || '').trim(),
+                            : '',
                           srtUrl: isLocalSrtContent(mediaConfig.srtUrl) 
                             ? mediaConfig.srtUrl 
-                            : (mediaConfig.srtUrl || '').trim()
+                            : ''
                         })
                         alert('Media configuration saved successfully!')
                         setShowMediaSettings(false)
@@ -1036,11 +891,11 @@ export default function Library() {
                             <button
                               onClick={async () => {
                                 try {
-                                  let videoUrl = mediaConfig.videoUrl
-                                  let srtUrl = mediaConfig.srtUrl
-                                  if (!videoUrl || !srtUrl) {
-                                    // If URLs are not set, prompt user to configure them
-                                    const shouldConfigure = confirm('Video and subtitle URLs are not configured. Would you like to configure them now?')
+                                  const audioUrl = mediaConfig.audioUrl
+                                  const srtUrl = mediaConfig.srtUrl
+                                  if (!audioUrl || !srtUrl) {
+                                    // If files are not set, prompt user to configure them
+                                    const shouldConfigure = confirm('Audio file or subtitle file is not configured. Would you like to configure them now?')
                                     if (shouldConfigure) {
                                       setShowMediaSettings(true)
                                       return
@@ -1048,7 +903,7 @@ export default function Library() {
                                     return // Don't proceed if user cancels
                                   }
                                   const quoteText = `"${quote.quote}"${quote.character ? ` by ${quote.character}` : ''}`
-                                  await playOriginalQuoteSegment(quoteText, videoUrl, srtUrl, {
+                                  await playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, {
                                     onStart: () => {
                                       setPlayingQuoteId(quote.id)
                                       setIsPausedState(false)
@@ -1061,24 +916,14 @@ export default function Library() {
                                       console.error('Original clip playback error:', e)
                                       const errorMsg = e?.message || 'Could not play original clip'
                                       
-                                      // If subtitle is not configured, offer to open settings
-                                      if (errorMsg.includes('Subtitle URL or file is not configured')) {
-                                        const shouldConfigure = confirm('Subtitle is not configured. Would you like to configure it now?')
+                                      // If files are not configured, offer to open settings
+                                      if (errorMsg.includes('not configured') || errorMsg.includes('not set up')) {
+                                        const shouldConfigure = confirm('Audio or subtitle file is not configured. Would you like to configure them now?')
                                         if (shouldConfigure) {
                                           setShowMediaSettings(true)
                                         }
-                                      } else if (errorMsg.includes('page URL') || errorMsg.includes('Extract from Page')) {
-                                        // If it's a page URL error, offer to extract
-                                        const shouldExtract = confirm(
-                                          'This appears to be a page URL, not a direct video URL.\n\n' +
-                                          'Would you like to extract the video URL from the page?\n\n' +
-                                          'Click OK to open media settings and use the "Extract from Page" feature.'
-                                        )
-                                        if (shouldExtract) {
-                                          setShowMediaSettings(true)
-                                        }
                                       } else {
-                                        alert(`Error: ${errorMsg}\n\nTroubleshooting:\n- Use direct video URLs (ending in .mp4 or .m3u8), not page URLs\n- If you have a page URL, use "Extract from Page" in media settings\n- Ensure the video URL is accessible and not protected\n- Check that the video format is supported by your browser`)
+                                        alert(`Error: ${errorMsg}\n\nPlease ensure:\n- You have uploaded both an audio file and a subtitle file\n- The subtitle file is a valid SRT format\n- The quote text matches the subtitle content`)
                                       }
                                       setPlayingQuoteId(null)
                                       setIsPausedState(false)
