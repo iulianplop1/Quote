@@ -298,6 +298,11 @@ export async function getMovieMediaConfigLocal(movieId) {
   try {
     const raw = localStorage.getItem(LS_PREFIX + movieId)
     const cfg = raw ? JSON.parse(raw) : { videoUrl: '', audioUrl: '', srtUrl: '' }
+    console.log(`[getMovieMediaConfigLocal] Loading config for movie ${movieId}:`, {
+      srtUrlType: cfg.srtUrl ? (cfg.srtUrl.startsWith('data:local-srt:') ? 'local' : 'other') : 'empty',
+      srtUrlLength: cfg.srtUrl ? cfg.srtUrl.length : 0,
+      srtUrlPreview: cfg.srtUrl ? cfg.srtUrl.substring(0, 50) : 'empty'
+    })
     
     // Check if srtUrl is a marker for local storage (could be stored with or without prefix)
     const marker = LOCAL_SRT_PREFIX + 'stored'
@@ -305,17 +310,19 @@ export async function getMovieMediaConfigLocal(movieId) {
                      (isLocalSrtContent(cfg.srtUrl) && getLocalSrtContent(cfg.srtUrl) === 'stored')
     
     if (isMarker) {
+      console.log(`[getMovieMediaConfigLocal] SRT marker detected, loading from storage...`)
       // Load the actual content from localStorage
       const localContent = localStorage.getItem(LS_SRT_PREFIX + movieId)
       if (localContent && localContent.trim()) {
+        console.log(`[getMovieMediaConfigLocal] SRT content loaded from localStorage, length:`, localContent.length)
         cfg.srtUrl = createLocalSrtUrl(localContent)
       } else {
-        console.warn(`Local SRT content not found for movie ${movieId}. Marker was: ${cfg.srtUrl}`)
+        console.warn(`[getMovieMediaConfigLocal] Local SRT content not found for movie ${movieId}. Marker was: ${cfg.srtUrl}`)
         // Try to check if content exists with different key format
         const altKey = `movie-srt-${movieId}`
         const altContent = localStorage.getItem(altKey)
         if (altContent && altContent.trim()) {
-          console.log(`Found SRT content with alternate key, migrating...`)
+          console.log(`[getMovieMediaConfigLocal] Found SRT content with alternate key, migrating...`)
           localStorage.setItem(LS_SRT_PREFIX + movieId, altContent)
           cfg.srtUrl = createLocalSrtUrl(altContent)
         } else {
@@ -325,17 +332,29 @@ export async function getMovieMediaConfigLocal(movieId) {
     } else if (isLocalSrtContent(cfg.srtUrl)) {
       // It's already a full data URL with content, verify it's not just the marker
       const content = getLocalSrtContent(cfg.srtUrl)
-      if (!content || content === 'stored' || content.trim() === '') {
+      console.log(`[getMovieMediaConfigLocal] SRT is local content, checking...`, {
+        contentLength: content ? content.length : 0,
+        isStored: content === 'stored',
+        isEmpty: !content || (typeof content === 'string' && content.trim() === '')
+      })
+      
+      if (!content || content === 'stored' || (typeof content === 'string' && content.trim() === '')) {
         // It's a marker or empty, try to load from localStorage
+        console.log(`[getMovieMediaConfigLocal] SRT content is marker/empty, loading from localStorage...`)
         const localContent = localStorage.getItem(LS_SRT_PREFIX + movieId)
         if (localContent && localContent.trim()) {
+          console.log(`[getMovieMediaConfigLocal] SRT content loaded from localStorage (fallback), length:`, localContent.length)
           cfg.srtUrl = createLocalSrtUrl(localContent)
         } else {
-          console.warn(`Local SRT content not found for movie ${movieId}, data URL was empty or marker`)
+          console.warn(`[getMovieMediaConfigLocal] Local SRT content not found for movie ${movieId}, data URL was empty or marker`)
           cfg.srtUrl = ''
         }
+      } else {
+        console.log(`[getMovieMediaConfigLocal] SRT content is valid, length:`, content.length)
       }
       // Otherwise, it's already the full content, keep it as is
+    } else {
+      console.log(`[getMovieMediaConfigLocal] SRT is not local content or empty`)
     }
     
     // Handle audioUrl local storage

@@ -891,9 +891,21 @@ export default function Library() {
                             <button
                               onClick={async () => {
                                 try {
-                                  const audioUrl = mediaConfig.audioUrl
-                                  const srtUrl = mediaConfig.srtUrl
+                                  console.log('Film button clicked, loading media config...')
+                                  // Reload media config to ensure we have the latest
+                                  const cfg = await getMovieMediaConfigPersisted(selectedMovie.id)
+                                  console.log('Media config loaded:', { 
+                                    hasAudio: !!cfg.audioUrl, 
+                                    hasSrt: !!cfg.srtUrl,
+                                    audioType: cfg.audioUrl ? (cfg.audioUrl.startsWith('data:local-audio:') ? 'local' : 'url') : 'none',
+                                    srtType: cfg.srtUrl ? (cfg.srtUrl.startsWith('data:local-srt:') ? 'local' : 'url') : 'none'
+                                  })
+                                  
+                                  const audioUrl = cfg.audioUrl
+                                  const srtUrl = cfg.srtUrl
+                                  
                                   if (!audioUrl || !srtUrl) {
+                                    console.warn('Missing files:', { audioUrl: !!audioUrl, srtUrl: !!srtUrl })
                                     // If files are not set, prompt user to configure them
                                     const shouldConfigure = confirm('Audio file or subtitle file is not configured. Would you like to configure them now?')
                                     if (shouldConfigure) {
@@ -902,13 +914,18 @@ export default function Library() {
                                     }
                                     return // Don't proceed if user cancels
                                   }
+                                  
                                   const quoteText = `"${quote.quote}"${quote.character ? ` by ${quote.character}` : ''}`
+                                  console.log('Starting playback:', { quoteText: quoteText.substring(0, 50), hasAudio: !!audioUrl, hasSrt: !!srtUrl })
+                                  
                                   await playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, {
                                     onStart: () => {
+                                      console.log('Playback started')
                                       setPlayingQuoteId(quote.id)
                                       setIsPausedState(false)
                                     },
                                     onEnd: () => {
+                                      console.log('Playback ended')
                                       setPlayingQuoteId(null)
                                       setIsPausedState(false)
                                     },
@@ -917,8 +934,8 @@ export default function Library() {
                                       const errorMsg = e?.message || 'Could not play original clip'
                                       
                                       // If files are not configured, offer to open settings
-                                      if (errorMsg.includes('not configured') || errorMsg.includes('not set up')) {
-                                        const shouldConfigure = confirm('Audio or subtitle file is not configured. Would you like to configure them now?')
+                                      if (errorMsg.includes('not configured') || errorMsg.includes('not set up') || errorMsg.includes('missing')) {
+                                        const shouldConfigure = confirm('Audio or subtitle file is not configured or missing. Would you like to configure them now?')
                                         if (shouldConfigure) {
                                           setShowMediaSettings(true)
                                         }
@@ -930,7 +947,8 @@ export default function Library() {
                                     }
                                   })
                                 } catch (e) {
-                                  console.error(e)
+                                  console.error('Error in Film button handler:', e)
+                                  alert(`Error: ${e.message || 'Unknown error occurred. Please check the console for details.'}`)
                                 }
                               }}
                               className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"

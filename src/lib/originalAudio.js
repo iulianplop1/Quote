@@ -165,18 +165,23 @@ function similarity(a, b) {
 
 // Fetch SRT text - supports both URLs and local file content
 export async function fetchSrt(srtUrl) {
+  console.log('fetchSrt called with:', srtUrl ? (srtUrl.substring(0, 50) + '...') : 'null')
+  
   // Check if this is local file content (starts with data:local-srt:)
   if (srtUrl && srtUrl.startsWith('data:local-srt:')) {
     const content = srtUrl.substring('data:local-srt:'.length)
+    console.log('Local SRT detected, content length:', content.length, 'starts with:', content.substring(0, 30))
     
     // If content is just "stored", it's a marker and we need to load from localStorage
     // But we don't have movieId here, so this shouldn't happen if getMovieMediaConfigLocal works correctly
     // If it does happen, return an error
-    if (content === 'stored') {
+    if (content === 'stored' || content.trim() === 'stored') {
+      console.error('SRT marker found but content missing')
       throw new Error('Subtitle content marker found but actual content is missing. Please re-upload your subtitle file.')
     }
     
     // Return the content directly (everything after the prefix)
+    console.log('Returning SRT content, length:', content.length)
     return content
   }
   
@@ -654,13 +659,18 @@ export async function playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, { on
       throw new Error('Subtitle file is empty. Please upload a valid SRT file.')
     }
     
+    console.log('SRT fetched, length:', srt.length, 'first 200 chars:', srt.substring(0, 200))
+    
     const entries = parseSrtToEntries(srt) // This will throw a helpful error if parsing fails
+    console.log('SRT parsed, found', entries.length, 'entries')
     
     if (entries.length === 0) {
       throw new Error('No subtitle entries could be parsed from the SRT file. Please check that your SRT file is in the correct format.')
     }
     
+    console.log('Searching for quote in subtitles:', quoteText.substring(0, 50))
     const { index, score } = findBestSubtitleMatch(quoteText, entries)
+    console.log('Best match found:', { index, score, entry: index >= 0 ? entries[index] : null })
     if (index < 0 || score < 0.2) {
       throw new Error(`Could not locate quote "${quoteText.substring(0, 50)}..." in subtitles. The quote text may not match the subtitle content, or the subtitles may be for a different version of the movie.`)
     }
