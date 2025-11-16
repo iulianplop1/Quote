@@ -162,8 +162,17 @@ function similarity(a, b) {
 export async function fetchSrt(srtUrl) {
   // Check if this is local file content (starts with data:local-srt:)
   if (srtUrl && srtUrl.startsWith('data:local-srt:')) {
+    const content = srtUrl.substring('data:local-srt:'.length)
+    
+    // If content is just "stored", it's a marker and we need to load from localStorage
+    // But we don't have movieId here, so this shouldn't happen if getMovieMediaConfigLocal works correctly
+    // If it does happen, return an error
+    if (content === 'stored') {
+      throw new Error('Subtitle content marker found but actual content is missing. Please re-upload your subtitle file.')
+    }
+    
     // Return the content directly (everything after the prefix)
-    return srtUrl.substring('data:local-srt:'.length)
+    return content
   }
   
   // Otherwise, fetch from URL
