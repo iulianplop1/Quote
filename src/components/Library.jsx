@@ -1067,8 +1067,18 @@ export default function Library() {
                                         if (shouldConfigure) {
                                           setShowMediaSettings(true)
                                         }
+                                      } else if (errorMsg.includes('page URL') || errorMsg.includes('Extract from Page')) {
+                                        // If it's a page URL error, offer to extract
+                                        const shouldExtract = confirm(
+                                          'This appears to be a page URL, not a direct video URL.\n\n' +
+                                          'Would you like to extract the video URL from the page?\n\n' +
+                                          'Click OK to open media settings and use the "Extract from Page" feature.'
+                                        )
+                                        if (shouldExtract) {
+                                          setShowMediaSettings(true)
+                                        }
                                       } else {
-                                        alert(`Error: ${errorMsg}\n\nMake sure you're using:\n- Direct video URLs (ending in .mp4 or .m3u8), not page URLs\n- Direct SRT file URLs that allow CORS\n- Both URLs must be accessible from your browser`)
+                                        alert(`Error: ${errorMsg}\n\nTroubleshooting:\n- Use direct video URLs (ending in .mp4 or .m3u8), not page URLs\n- If you have a page URL, use "Extract from Page" in media settings\n- Ensure the video URL is accessible and not protected\n- Check that the video format is supported by your browser`)
                                       }
                                       setPlayingQuoteId(null)
                                       setIsPausedState(false)

@@ -338,8 +338,51 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
 // Returns a function to stop playback.
 export function playVideoSegment(videoUrl, startMs, endMs, { onStart, onEnd, onError } = {}) {
   // Check if URL looks like a page URL (not direct video)
-  if (videoUrl.includes('111movies.com/movie/') && !videoUrl.endsWith('.mp4') && !videoUrl.endsWith('.m3u8')) {
-    onError?.(new Error('Please provide a direct video URL (ending in .mp4 or .m3u8), not a page URL. The 111movies.com page URL cannot be used directly due to CORS restrictions.'))
+  const isPageUrl = (url) => {
+    if (!url) return false
+    // Check for common page URL patterns
+    const pagePatterns = [
+      /\/movie\/watch\//,
+      /\/movie\/\d+/,
+      /\/watch\//,
+      /\/play\//,
+      /\/stream\//,
+    ]
+    const pageDomains = [
+      '111movies.com',
+      '456movie.net',
+      'fmovies.to',
+      '123movies',
+    ]
+    
+    // Check if it's a known page domain
+    if (pageDomains.some(domain => url.includes(domain))) {
+      // But allow if it ends with video extensions
+      if (url.endsWith('.mp4') || url.endsWith('.m3u8') || url.endsWith('.webm') || url.endsWith('.mkv')) {
+        return false
+      }
+      return true
+    }
+    
+    // Check for page URL patterns
+    if (pagePatterns.some(pattern => pattern.test(url))) {
+      // But allow if it ends with video extensions
+      if (url.endsWith('.mp4') || url.endsWith('.m3u8') || url.endsWith('.webm') || url.endsWith('.mkv')) {
+        return false
+      }
+      return true
+    }
+    
+    return false
+  }
+  
+  if (isPageUrl(videoUrl)) {
+    onError?.(new Error(
+      'This appears to be a page URL, not a direct video URL.\n\n' +
+      'Please use the "Extract from Page" button in the media settings to extract the actual video URL from the page.\n\n' +
+      'Direct video URLs should end with .mp4, .m3u8, or similar video file extensions.\n\n' +
+      'Page URLs cannot be used directly due to CORS restrictions and security policies.'
+    ))
     return () => {}
   }
   
@@ -350,24 +393,36 @@ export function playVideoSegment(videoUrl, startMs, endMs, { onStart, onEnd, onE
   const checkVideoAccess = async () => {
     try {
       const testUrl = proxiedVideoUrl
-      const response = await fetch(testUrl, { method: 'HEAD' })
-      if (!response.ok) {
-        let errorMsg = `Video URL returned ${response.status} ${response.statusText}`
-        if (response.status === 403) {
-          errorMsg += '. The video URL may be protected, expired, or require authentication. Please check if the URL is still valid and accessible.'
-        } else if (response.status === 404) {
-          errorMsg += '. The video URL was not found. Please verify the URL is correct.'
-        } else if (response.status === 401) {
-          errorMsg += '. The video URL requires authentication.'
+      // Use a timeout to avoid hanging
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 5000) // 5 second timeout
+      
+      try {
+        const response = await fetch(testUrl, { 
+          method: 'HEAD',
+          signal: controller.signal,
+          mode: 'no-cors' // Don't fail on CORS - let the video element try
+        })
+        clearTimeout(timeoutId)
+        
+        // With no-cors mode, we can't read the response, so assume it's OK
+        // The video element will handle actual errors
+        return true
+      } catch (fetchError) {
+        clearTimeout(timeoutId)
+        // If it's an abort (timeout) or CORS error, continue anyway
+        // The video element might still be able to play it
+        if (fetchError.name === 'AbortError') {
+          console.warn('Video URL check timed out, continuing anyway')
+        } else {
+          console.warn('Could not verify video URL accessibility (may be CORS), continuing anyway:', fetchError)
         }
-        onError?.(new Error(errorMsg))
-        return false
+        return true // Continue anyway - let the video element try
       }
-      return true
     } catch (error) {
       // If HEAD request fails, try to continue anyway (might be CORS issue, but video element might still work)
       console.warn('Could not verify video URL accessibility:', error)
-      return true
+      return true // Continue anyway - the video element might still work
     }
   }
   
@@ -474,9 +529,30 @@ export function playVideoSegment(videoUrl, startMs, endMs, { onStart, onEnd, onE
     video.onerror = (e) => {
       const mediaError = video.error
       if (mediaError) {
-        reportError(mediaError)
+        let errorMsg = ''
+        // Provide more specific error messages
+        if (mediaError.code === 4) { // MEDIA_ERR_SRC_NOT_SUPPORTED
+          errorMsg = 'Video format not supported or URL is invalid.\n\n' +
+            'Please ensure:\n' +
+            '1. You are using a direct video URL (ending in .mp4, .m3u8, etc.), not a page URL\n' +
+            '2. If you have a page URL, use the "Extract from Page" button to get the actual video URL\n' +
+            '3. The video URL is accessible and not protected by CORS\n' +
+            '4. The video format is supported by your browser'
+          onError?.(new Error(errorMsg))
+        } else {
+          reportError(mediaError)
+        }
       } else {
-        reportError('Unknown video playback error. The video URL may be invalid or inaccessible.')
+        // Check if the URL looks like a page URL
+        if (videoUrl.includes('/movie/') || videoUrl.includes('/watch/') || videoUrl.includes('/play/')) {
+          onError?.(new Error(
+            'This appears to be a page URL, not a direct video URL.\n\n' +
+            'Please use the "Extract from Page" button in the media settings to extract the actual video URL from the page.\n\n' +
+            'Direct video URLs should end with .mp4, .m3u8, or similar video file extensions.'
+          ))
+        } else {
+          reportError(new Error('Unknown video playback error. The video URL may be invalid, inaccessible, or in an unsupported format.'))
+        }
       }
     }
     
