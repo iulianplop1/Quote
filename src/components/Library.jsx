@@ -49,6 +49,8 @@ export default function Library() {
   const [elevenLabsVoices, setElevenLabsVoices] = useState([])
   const [browserVoices, setBrowserVoices] = useState([])
   const [loadingVoices, setLoadingVoices] = useState(false)
+  const [showMediaSettings, setShowMediaSettings] = useState(false)
+  const [mediaConfig, setMediaConfig] = useState({ videoUrl: '', srtUrl: '' })
 
   useEffect(() => {
     loadMovies()
@@ -320,6 +322,11 @@ export default function Library() {
     setPlayingQuoteId(null)
     setIsPausedState(false)
     
+    // Load media config for this movie
+    const cfg = await getMovieMediaConfigPersisted(movie.id)
+    setMediaConfig(cfg)
+    setShowMediaSettings(false)
+    
     setSelectedMovie(movie)
     setLoadingQuotes(true)
     try {
@@ -497,6 +504,13 @@ export default function Library() {
                   <Settings size={18} />
                 </button>
                 <button
+                  onClick={() => setShowMediaSettings(!showMediaSettings)}
+                  className="btn-secondary flex items-center space-x-2"
+                  title="Edit Video & Subtitle URLs"
+                >
+                  <LinkIcon size={18} />
+                </button>
+                <button
                   onClick={() => {
                     stopSpeaking()
                     stopQueue()
@@ -506,6 +520,8 @@ export default function Library() {
                     setIsPausedState(false)
                     setIsPlayingAll(false)
                     setCurrentQueueIndex(0)
+                    setShowMediaSettings(false)
+                    setMediaConfig({ videoUrl: '', srtUrl: '' })
                   }}
                   className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
                 >
@@ -596,6 +612,72 @@ export default function Library() {
               </div>
             )}
 
+            {showMediaSettings && (
+              <div className="mb-4 p-4 bg-slate-50 dark:bg-slate-700 rounded-lg border border-slate-200 dark:border-slate-600 space-y-4">
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100">Video & Subtitle URLs</h3>
+                <p className="text-sm text-slate-600 dark:text-slate-400">
+                  Configure the video and subtitle URLs for playing original audio clips. These URLs are stored per movie.
+                </p>
+                
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Video URL (must end in .mp4 or .m3u8)
+                  </label>
+                  <input
+                    type="text"
+                    value={mediaConfig.videoUrl || ''}
+                    onChange={(e) => setMediaConfig({ ...mediaConfig, videoUrl: e.target.value })}
+                    className="input-field"
+                    placeholder="https://example.com/video.m3u8"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Subtitle URL (SRT file)
+                  </label>
+                  <input
+                    type="text"
+                    value={mediaConfig.srtUrl || ''}
+                    onChange={(e) => setMediaConfig({ ...mediaConfig, srtUrl: e.target.value })}
+                    className="input-field"
+                    placeholder="https://example.com/subtitles.srt"
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={async () => {
+                      if (!mediaConfig.videoUrl || !mediaConfig.srtUrl) {
+                        alert('Please enter both video and subtitle URLs')
+                        return
+                      }
+                      try {
+                        await setMovieMediaConfigPersisted(selectedMovie.id, {
+                          videoUrl: mediaConfig.videoUrl.trim(),
+                          srtUrl: mediaConfig.srtUrl.trim()
+                        })
+                        alert('Media URLs saved successfully!')
+                        setShowMediaSettings(false)
+                      } catch (error) {
+                        console.error('Error saving media config:', error)
+                        alert('Error saving URLs: ' + error.message)
+                      }
+                    }}
+                    className="btn-primary"
+                  >
+                    Save URLs
+                  </button>
+                  <button
+                    onClick={() => setShowMediaSettings(false)}
+                    className="btn-secondary"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="flex-1 overflow-y-auto pr-2">
               {loadingQuotes ? (
                 <div className="text-center py-12">
@@ -646,10 +728,16 @@ export default function Library() {
                             <button
                               onClick={async () => {
                                 try {
-                                  const cfg = await getMovieMediaConfigPersisted(selectedMovie.id)
-                                  let videoUrl = cfg.videoUrl
-                                  let srtUrl = cfg.srtUrl
+                                  let videoUrl = mediaConfig.videoUrl
+                                  let srtUrl = mediaConfig.srtUrl
                                   if (!videoUrl || !srtUrl) {
+                                    // If URLs are not set, prompt user to configure them
+                                    const shouldConfigure = confirm('Video and subtitle URLs are not configured. Would you like to configure them now?')
+                                    if (shouldConfigure) {
+                                      setShowMediaSettings(true)
+                                      return
+                                    }
+                                    // Fallback to old prompt method if user cancels
                                     const inputVideo = prompt('Enter video URL for this movie (from your licensed source):', videoUrl || '')
                                     if (!inputVideo) return
                                     const inputSrt = prompt('Enter subtitles (SRT) URL for this movie:', srtUrl || '')
@@ -657,6 +745,8 @@ export default function Library() {
                                     videoUrl = inputVideo.trim()
                                     srtUrl = inputSrt.trim()
                                     await setMovieMediaConfigPersisted(selectedMovie.id, { videoUrl, srtUrl })
+                                    // Update local state
+                                    setMediaConfig({ videoUrl, srtUrl })
                                   }
                                   const quoteText = `"${quote.quote}"${quote.character ? ` by ${quote.character}` : ''}`
                                   await playOriginalQuoteSegment(quoteText, videoUrl, srtUrl, {
