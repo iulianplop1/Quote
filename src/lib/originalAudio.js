@@ -220,6 +220,8 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
     
     // The content should be a data URL (data:audio/mpeg;base64,...)
     // For large files, convert to Blob URL for better performance and compatibility
+    console.log('[playAudioSegment] Processing local audio content, length:', content.length, 'starts with:', content.substring(0, 50))
+    
     try {
       if (content.startsWith('data:audio/')) {
         // It's already a data URL, but for large files, convert to Blob URL
@@ -228,28 +230,56 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
           const base64Data = base64Match[1]
           console.log('[playAudioSegment] Converting base64 to blob, base64 length:', base64Data.length)
           
-          // Convert base64 to binary - for large files, do this in chunks to avoid memory issues
-          try {
-            const binaryString = atob(base64Data)
-            console.log('[playAudioSegment] Base64 decoded, binary string length:', binaryString.length)
-            
-            const bytes = new Uint8Array(binaryString.length)
-            for (let i = 0; i < binaryString.length; i++) {
-              bytes[i] = binaryString.charCodeAt(i)
-            }
-            
-            // Create blob and blob URL
-            const mimeType = content.match(/^data:(audio\/[^;]+)/)?.[1] || 'audio/mpeg'
-            const blob = new Blob([bytes], { type: mimeType })
-            blobUrlToCleanup = URL.createObjectURL(blob)
-            audioSrc = blobUrlToCleanup
-            console.log('[playAudioSegment] Created blob URL for audio, size:', blob.size, 'bytes, mimeType:', mimeType, 'blobUrl:', blobUrlToCleanup.substring(0, 50) + '...')
-          } catch (conversionError) {
-            console.error('[playAudioSegment] Error converting base64 to blob:', conversionError)
-            // Fallback to using data URL directly - might work for smaller files
-            audioSrc = content
-            console.log('[playAudioSegment] Falling back to data URL due to conversion error')
-          }
+          // For very large files, use fetch which handles data URLs efficiently
+          // This is async, so we'll set up the audio element after conversion
+          fetch(content)
+            .then(response => response.blob())
+            .then(blob => {
+              blobUrlToCleanup = URL.createObjectURL(blob)
+              console.log('[playAudioSegment] Created blob URL via fetch, size:', blob.size, 'bytes, mimeType:', blob.type)
+              
+              // Update the audio source and load
+              const audioEl = document.getElementById('original-audio-hidden-audio')
+              if (audioEl && !checkEnded()) {
+                audioEl.src = blobUrlToCleanup
+                audioEl.load()
+                console.log('[playAudioSegment] Updated audio source to blob URL')
+              }
+            })
+            .catch(fetchError => {
+              console.warn('[playAudioSegment] Fetch approach failed, trying direct conversion:', fetchError)
+              // Fallback: try direct conversion for smaller files
+              try {
+                const binaryString = atob(base64Data)
+                console.log('[playAudioSegment] Base64 decoded, binary string length:', binaryString.length)
+                
+                const bytes = new Uint8Array(binaryString.length)
+                for (let i = 0; i < binaryString.length; i++) {
+                  bytes[i] = binaryString.charCodeAt(i)
+                }
+                
+                // Create blob and blob URL
+                const mimeType = content.match(/^data:(audio\/[^;]+)/)?.[1] || 'audio/mpeg'
+                const blob = new Blob([bytes], { type: mimeType })
+                blobUrlToCleanup = URL.createObjectURL(blob)
+                
+                // Update the audio source and load
+                const audioEl = document.getElementById('original-audio-hidden-audio')
+                if (audioEl && !checkEnded()) {
+                  audioEl.src = blobUrlToCleanup
+                  audioEl.load()
+                  console.log('[playAudioSegment] Created blob URL via direct conversion, size:', blob.size, 'bytes, mimeType:', mimeType)
+                }
+              } catch (conversionError) {
+                console.error('[playAudioSegment] Error converting base64 to blob:', conversionError)
+                // Fallback to using data URL directly
+                audioSrc = content
+                console.log('[playAudioSegment] Falling back to data URL due to conversion error')
+              }
+            })
+          
+          // For now, use the data URL directly - it will be updated to blob URL when ready
+          audioSrc = content
         } else {
           // Fallback to using data URL directly
           audioSrc = content
@@ -283,6 +313,10 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
   const durationSec = Math.max(0.1, (endMs - startMs) / 1000)
   let ended = false
   let errorReported = false
+  
+  // Create a closure to access ended variable in async callbacks
+  const checkEnded = () => ended
+  const setEnded = (value) => { ended = value }
   
   const clearTimers = () => {
     audio.oncanplay = null
@@ -336,7 +370,7 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
   audio.oncanplay = () => {
     console.log('[playAudioSegment] Audio can play, readyState:', audio.readyState, 'duration:', audio.duration, 'currentTime:', audio.currentTime)
     // Check if playback was already ended/cancelled
-    if (ended) {
+    if (checkEnded()) {
       console.log('[playAudioSegment] Playback already ended, skipping')
       return
     }
@@ -361,7 +395,7 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
         playPromise.then(() => {
           console.log('[playAudioSegment] Audio play() promise resolved, playing:', !audio.paused, 'currentTime:', audio.currentTime)
           // Only set up timeout if playback wasn't ended
-          if (ended) {
+          if (checkEnded()) {
             console.log('[playAudioSegment] Playback ended before timeout setup')
             return
           }
@@ -369,18 +403,18 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
           console.log('[playAudioSegment] Setting timeout to stop playback after', durationSec, 'seconds')
           // Stop after duration
           setTimeout(() => {
-            if (ended) {
+            if (checkEnded()) {
               console.log('[playAudioSegment] Playback already ended in timeout')
               return
             }
-            ended = true
+            setEnded(true)
             console.log('[playAudioSegment] Stopping playback after duration')
             try {
               audio.pause()
               onEnd && onEnd()
             } catch (e) {
               // Ignore errors from pause if already ended
-              if (!ended) {
+              if (!checkEnded()) {
                 reportError(e)
               }
             }
@@ -393,7 +427,7 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
             console.log('[playAudioSegment] Play interrupted by pause (expected)')
             return
           }
-          if (!ended) {
+          if (!checkEnded()) {
             reportError(e)
           }
         })
@@ -401,7 +435,7 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
         console.log('[playAudioSegment] play() did not return a promise')
       }
     } catch (e) {
-      if (!ended) {
+      if (!checkEnded()) {
         reportError(e)
       }
     }
@@ -455,7 +489,7 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
   // Stop function
   return () => {
     try {
-      ended = true
+      setEnded(true)
       clearTimers()
       
       // Only pause if audio is actually playing/loading
