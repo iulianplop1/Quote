@@ -5,10 +5,74 @@ import { supabase } from './supabase'
 const LS_PREFIX = 'movie-media-'
 const LS_SRT_PREFIX = 'movie-srt-content-'
 const LS_AUDIO_PREFIX = 'movie-audio-content-'
+const IDB_STORE_NAME = 'movie-audio-files'
+const MAX_LOCALSTORAGE_SIZE = 4 * 1024 * 1024 // 4MB limit for localStorage
 
 // Check if srtUrl is actually local file content (starts with special prefix)
 const LOCAL_SRT_PREFIX = 'data:local-srt:'
 const LOCAL_AUDIO_PREFIX = 'data:local-audio:'
+
+// IndexedDB helper functions for large audio files
+async function getIndexedDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('QuoteAppDB', 1)
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve(request.result)
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result
+      if (!db.objectStoreNames.contains(IDB_STORE_NAME)) {
+        db.createObjectStore(IDB_STORE_NAME)
+      }
+    }
+  })
+}
+
+async function setAudioInIndexedDB(key, value) {
+  try {
+    const db = await getIndexedDB()
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction([IDB_STORE_NAME], 'readwrite')
+      const store = transaction.objectStore(IDB_STORE_NAME)
+      const request = store.put(value, key)
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.error('IndexedDB error:', error)
+    throw error
+  }
+}
+
+async function getAudioFromIndexedDB(key) {
+  try {
+    const db = await getIndexedDB()
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction([IDB_STORE_NAME], 'readonly')
+      const store = transaction.objectStore(IDB_STORE_NAME)
+      const request = store.get(key)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.error('IndexedDB error:', error)
+    return null
+  }
+}
+
+async function removeAudioFromIndexedDB(key) {
+  try {
+    const db = await getIndexedDB()
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction([IDB_STORE_NAME], 'readwrite')
+      const store = transaction.objectStore(IDB_STORE_NAME)
+      const request = store.delete(key)
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
+  } catch (error) {
+    console.error('IndexedDB error:', error)
+  }
+}
 export function isLocalSrtContent(srtUrl) {
   return srtUrl && srtUrl.startsWith(LOCAL_SRT_PREFIX)
 }
@@ -43,7 +107,7 @@ export function getLocalAudioContent(audioUrl) {
 export async function getMovieMediaConfigPersisted(movieId) {
   try {
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return getMovieMediaConfigLocal(movieId)
+    if (!user) return await getMovieMediaConfigLocal(movieId)
     // Try reading from movie_media table if it exists
     const { data, error } = await supabase
       .from('movie_media')
@@ -53,11 +117,12 @@ export async function getMovieMediaConfigPersisted(movieId) {
       .maybeSingle()
     if (error) {
       // Table might not exist (404) or other error; silently fall back to local
-      if (error.code !== 'PGRST116') {
-        // Only log non-404 errors (PGRST116 = not found)
-        console.debug('movie_media table not accessible, using localStorage:', error.message)
+      // PGRST116 = not found, 400 = bad request (might be schema/permission issue)
+      if (error.code !== 'PGRST116' && error.code !== 'PGRST301') {
+        // Only log non-404/400 errors
+        console.debug('movie_media table not accessible, using localStorage:', error.message, error.code)
       }
-      return getMovieMediaConfigLocal(movieId)
+      return await getMovieMediaConfigLocal(movieId)
     }
     if (data) {
       const cfg = { videoUrl: data.video_url || '', audioUrl: data.audio_url || '', srtUrl: data.srt_url || '' }
@@ -79,12 +144,12 @@ export async function getMovieMediaConfigPersisted(movieId) {
         }
       }
       // Cache to localStorage too
-      setMovieMediaConfigLocal(movieId, cfg)
+      await setMovieMediaConfigLocal(movieId, cfg)
       return cfg
     }
-    return getMovieMediaConfigLocal(movieId)
+    return await getMovieMediaConfigLocal(movieId)
   } catch {
-    return getMovieMediaConfigLocal(movieId)
+    return await getMovieMediaConfigLocal(movieId)
   }
 }
 
@@ -101,17 +166,49 @@ export async function setMovieMediaConfigPersisted(movieId, { videoUrl, audioUrl
     localStorage.removeItem(LS_SRT_PREFIX + movieId)
   }
   
-  // Handle audioUrl storage
+  // Handle audioUrl storage - use IndexedDB for large files
   let audioUrlToStore = audioUrl || ''
   if (isLocalAudioContent(audioUrl)) {
     const content = getLocalAudioContent(audioUrl)
-    localStorage.setItem(LS_AUDIO_PREFIX + movieId, content)
-    audioUrlToStore = LOCAL_AUDIO_PREFIX + 'stored'
+    const contentSize = new Blob([content]).size
+    const storageKey = LS_AUDIO_PREFIX + movieId
+    
+    try {
+      if (contentSize > MAX_LOCALSTORAGE_SIZE) {
+        // Use IndexedDB for large files
+        await setAudioInIndexedDB(storageKey, content)
+        localStorage.removeItem(storageKey) // Remove from localStorage if it exists
+        // Mark as stored in IndexedDB
+        localStorage.setItem(storageKey + '-idb', 'true')
+      } else {
+        // Use localStorage for small files
+        localStorage.setItem(storageKey, content)
+        localStorage.removeItem(storageKey + '-idb')
+        await removeAudioFromIndexedDB(storageKey) // Remove from IndexedDB if it exists
+      }
+      audioUrlToStore = LOCAL_AUDIO_PREFIX + 'stored'
+    } catch (error) {
+      if (error.name === 'QuotaExceededError') {
+        // Fallback to IndexedDB if localStorage quota exceeded
+        try {
+          await setAudioInIndexedDB(storageKey, content)
+          localStorage.setItem(storageKey + '-idb', 'true')
+          audioUrlToStore = LOCAL_AUDIO_PREFIX + 'stored'
+        } catch (idbError) {
+          throw new Error('Audio file is too large to store. Please use an audio URL instead.')
+        }
+      } else {
+        throw error
+      }
+    }
   } else {
-    localStorage.removeItem(LS_AUDIO_PREFIX + movieId)
+    const storageKey = LS_AUDIO_PREFIX + movieId
+    localStorage.removeItem(storageKey)
+    localStorage.removeItem(storageKey + '-idb')
+    removeAudioFromIndexedDB(storageKey)
   }
   
-  setMovieMediaConfigLocal(movieId, { videoUrl, audioUrl: audioUrlToStore, srtUrl: srtUrlToStore })
+  await setMovieMediaConfigLocal(movieId, { videoUrl, audioUrl: audioUrlToStore, srtUrl: srtUrlToStore })
   
   try {
     const { data: { user } } = await supabase.auth.getUser()
@@ -132,9 +229,10 @@ export async function setMovieMediaConfigPersisted(movieId, { videoUrl, audioUrl
       }, { onConflict: 'user_id,movie_id' })
     if (error) {
       // Table may not exist (404) or other error; silently ignore
-      if (error.code !== 'PGRST116') {
-        // Only log non-404 errors
-        console.debug('movie_media table not accessible, using localStorage only:', error.message)
+      // PGRST116 = not found, 400 = bad request (might be schema/permission issue)
+      if (error.code !== 'PGRST116' && error.code !== 'PGRST301') {
+        // Only log non-404/400 errors
+        console.debug('movie_media table not accessible, using localStorage only:', error.message, error.code)
       }
       return false
     }
@@ -144,7 +242,7 @@ export async function setMovieMediaConfigPersisted(movieId, { videoUrl, audioUrl
   }
 }
 
-export function getMovieMediaConfigLocal(movieId) {
+export async function getMovieMediaConfigLocal(movieId) {
   try {
     const raw = localStorage.getItem(LS_PREFIX + movieId)
     const cfg = raw ? JSON.parse(raw) : { videoUrl: '', audioUrl: '', srtUrl: '' }
@@ -194,8 +292,19 @@ export function getMovieMediaConfigLocal(movieId) {
                          (isLocalAudioContent(cfg.audioUrl) && getLocalAudioContent(cfg.audioUrl) === 'stored')
     
     if (isAudioMarker) {
-      const localAudioContent = localStorage.getItem(LS_AUDIO_PREFIX + movieId)
-      if (localAudioContent && localAudioContent.trim()) {
+      const storageKey = LS_AUDIO_PREFIX + movieId
+      const useIndexedDB = localStorage.getItem(storageKey + '-idb') === 'true'
+      
+      let localAudioContent = null
+      if (useIndexedDB) {
+        localAudioContent = await getAudioFromIndexedDB(storageKey)
+      } else {
+        localAudioContent = localStorage.getItem(storageKey)
+      }
+      
+      if (localAudioContent && localAudioContent.trim && localAudioContent.trim()) {
+        cfg.audioUrl = createLocalAudioUrl(localAudioContent)
+      } else if (localAudioContent) {
         cfg.audioUrl = createLocalAudioUrl(localAudioContent)
       } else {
         console.warn(`Local audio content not found for movie ${movieId}`)
@@ -203,9 +312,20 @@ export function getMovieMediaConfigLocal(movieId) {
       }
     } else if (isLocalAudioContent(cfg.audioUrl)) {
       const content = getLocalAudioContent(cfg.audioUrl)
-      if (!content || content === 'stored' || content.trim() === '') {
-        const localAudioContent = localStorage.getItem(LS_AUDIO_PREFIX + movieId)
-        if (localAudioContent && localAudioContent.trim()) {
+      if (!content || content === 'stored' || (typeof content === 'string' && content.trim() === '')) {
+        const storageKey = LS_AUDIO_PREFIX + movieId
+        const useIndexedDB = localStorage.getItem(storageKey + '-idb') === 'true'
+        
+        let localAudioContent = null
+        if (useIndexedDB) {
+          localAudioContent = await getAudioFromIndexedDB(storageKey)
+        } else {
+          localAudioContent = localStorage.getItem(storageKey)
+        }
+        
+        if (localAudioContent && localAudioContent.trim && localAudioContent.trim()) {
+          cfg.audioUrl = createLocalAudioUrl(localAudioContent)
+        } else if (localAudioContent) {
           cfg.audioUrl = createLocalAudioUrl(localAudioContent)
         } else {
           cfg.audioUrl = ''
@@ -220,7 +340,7 @@ export function getMovieMediaConfigLocal(movieId) {
   }
 }
 
-export function setMovieMediaConfigLocal(movieId, { videoUrl, audioUrl, srtUrl }) {
+export async function setMovieMediaConfigLocal(movieId, { videoUrl, audioUrl, srtUrl }) {
   // If srtUrl is local content, store it separately
   let srtUrlToStore = srtUrl || ''
   if (isLocalSrtContent(srtUrl)) {
@@ -231,14 +351,49 @@ export function setMovieMediaConfigLocal(movieId, { videoUrl, audioUrl, srtUrl }
     localStorage.removeItem(LS_SRT_PREFIX + movieId)
   }
   
-  // If audioUrl is local content, store it separately
+  // If audioUrl is local content, store it separately - use IndexedDB for large files
   let audioUrlToStore = audioUrl || ''
   if (isLocalAudioContent(audioUrl)) {
     const content = getLocalAudioContent(audioUrl)
-    localStorage.setItem(LS_AUDIO_PREFIX + movieId, content)
-    audioUrlToStore = LOCAL_AUDIO_PREFIX + 'stored'
+    const contentSize = new Blob([content]).size
+    const storageKey = LS_AUDIO_PREFIX + movieId
+    
+    try {
+      if (contentSize > MAX_LOCALSTORAGE_SIZE) {
+        // Use IndexedDB for large files
+        await setAudioInIndexedDB(storageKey, content)
+        localStorage.removeItem(storageKey)
+        localStorage.setItem(storageKey + '-idb', 'true')
+      } else {
+        // Use localStorage for small files
+        localStorage.setItem(storageKey, content)
+        localStorage.removeItem(storageKey + '-idb')
+        await removeAudioFromIndexedDB(storageKey)
+      }
+      audioUrlToStore = LOCAL_AUDIO_PREFIX + 'stored'
+    } catch (error) {
+      if (error.name === 'QuotaExceededError') {
+        // Fallback to IndexedDB if localStorage quota exceeded
+        try {
+          await setAudioInIndexedDB(storageKey, content)
+          localStorage.setItem(storageKey + '-idb', 'true')
+          audioUrlToStore = LOCAL_AUDIO_PREFIX + 'stored'
+        } catch (idbError) {
+          console.error('Failed to store audio in IndexedDB:', idbError)
+          // Continue anyway - the audio is still in memory
+          audioUrlToStore = LOCAL_AUDIO_PREFIX + 'stored'
+        }
+      } else {
+        console.error('Error storing audio:', error)
+        // Continue anyway - the audio is still in memory
+        audioUrlToStore = LOCAL_AUDIO_PREFIX + 'stored'
+      }
+    }
   } else {
-    localStorage.removeItem(LS_AUDIO_PREFIX + movieId)
+    const storageKey = LS_AUDIO_PREFIX + movieId
+    localStorage.removeItem(storageKey)
+    localStorage.removeItem(storageKey + '-idb')
+    removeAudioFromIndexedDB(storageKey)
   }
   
   localStorage.setItem(LS_PREFIX + movieId, JSON.stringify({ 

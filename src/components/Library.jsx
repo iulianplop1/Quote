@@ -690,6 +690,21 @@ export default function Library() {
                           const file = e.target.files?.[0]
                           if (!file) return
                           
+                          // Check file size (warn if > 10MB, but allow up to 50MB)
+                          const maxRecommendedSize = 10 * 1024 * 1024 // 10MB
+                          const maxSize = 50 * 1024 * 1024 // 50MB
+                          if (file.size > maxSize) {
+                            alert(`File is too large (${(file.size / 1024 / 1024).toFixed(2)}MB). Maximum size is ${(maxSize / 1024 / 1024).toFixed(0)}MB. Please use a smaller file or provide an audio URL.`)
+                            return
+                          }
+                          if (file.size > maxRecommendedSize) {
+                            const proceed = confirm(
+                              `Warning: This file is large (${(file.size / 1024 / 1024).toFixed(2)}MB). ` +
+                              `Large files may take longer to process and use more storage. Continue?`
+                            )
+                            if (!proceed) return
+                          }
+                          
                           try {
                             // Read file as base64 (chunked to avoid stack overflow)
                             const arrayBuffer = await file.arrayBuffer()
@@ -711,7 +726,11 @@ export default function Library() {
                             }
                           } catch (error) {
                             console.error('Error reading audio file:', error)
-                            alert('Error reading audio file: ' + error.message)
+                            if (error.name === 'QuotaExceededError') {
+                              alert('Error: The audio file is too large to store. Please use a smaller file or provide an audio URL instead.')
+                            } else {
+                              alert('Error reading audio file: ' + error.message)
+                            }
                           }
                         }}
                         className="input-field"
@@ -905,19 +924,23 @@ export default function Library() {
                       }
                       try {
                         await setMovieMediaConfigPersisted(selectedMovie.id, {
-                          videoUrl: mediaConfig.videoUrl.trim(),
+                          videoUrl: (mediaConfig.videoUrl || '').trim(),
                           audioUrl: isLocalAudioContent(mediaConfig.audioUrl)
                             ? mediaConfig.audioUrl
-                            : mediaConfig.audioUrl.trim(),
+                            : (mediaConfig.audioUrl || '').trim(),
                           srtUrl: isLocalSrtContent(mediaConfig.srtUrl) 
                             ? mediaConfig.srtUrl 
-                            : mediaConfig.srtUrl.trim()
+                            : (mediaConfig.srtUrl || '').trim()
                         })
                         alert('Media configuration saved successfully!')
                         setShowMediaSettings(false)
                       } catch (error) {
                         console.error('Error saving media config:', error)
-                        alert('Error saving configuration: ' + error.message)
+                        if (error.name === 'QuotaExceededError') {
+                          alert('Error: The audio file is too large to store locally. Please use a smaller file or provide an audio URL instead.')
+                        } else {
+                          alert('Error saving configuration: ' + error.message)
+                        }
                       }
                     }}
                     className="btn-primary"
