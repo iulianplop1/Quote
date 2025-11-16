@@ -87,8 +87,15 @@ function similarity(a, b) {
   return overlap / Math.max(1, Math.max(aWords.size, bWords.size))
 }
 
-// Fetch SRT text
+// Fetch SRT text - supports both URLs and local file content
 export async function fetchSrt(srtUrl) {
+  // Check if this is local file content (starts with data:local-srt:)
+  if (srtUrl && srtUrl.startsWith('data:local-srt:')) {
+    // Return the content directly (everything after the prefix)
+    return srtUrl.substring('data:local-srt:'.length)
+  }
+  
+  // Otherwise, fetch from URL
   try {
     // Use proxy in development to avoid CORS issues
     const proxiedUrl = getProxiedUrl(srtUrl)

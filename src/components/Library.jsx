@@ -25,7 +25,7 @@ import {
   isElevenLabsAvailable,
 } from '../lib/textToSpeech'
 import { playOriginalQuoteSegment } from '../lib/originalAudio'
-import { getMovieMediaConfigPersisted, setMovieMediaConfigPersisted } from '../lib/mediaConfig'
+import { getMovieMediaConfigPersisted, setMovieMediaConfigPersisted, isLocalSrtContent, createLocalSrtUrl, getLocalSrtContent } from '../lib/mediaConfig'
 
 export default function Library() {
   const [movies, setMovies] = useState([])
@@ -51,6 +51,8 @@ export default function Library() {
   const [loadingVoices, setLoadingVoices] = useState(false)
   const [showMediaSettings, setShowMediaSettings] = useState(false)
   const [mediaConfig, setMediaConfig] = useState({ videoUrl: '', srtUrl: '' })
+  const [srtMethod, setSrtMethod] = useState('url') // 'url' or 'file'
+  const [srtFileName, setSrtFileName] = useState('')
 
   useEffect(() => {
     loadMovies()
@@ -325,6 +327,16 @@ export default function Library() {
     // Load media config for this movie
     const cfg = await getMovieMediaConfigPersisted(movie.id)
     setMediaConfig(cfg)
+    // Determine if subtitle is from URL or file
+    if (isLocalSrtContent(cfg.srtUrl)) {
+      setSrtMethod('file')
+      // Try to get filename from localStorage if available
+      const storedFileName = localStorage.getItem(`movie-srt-filename-${movie.id}`)
+      setSrtFileName(storedFileName || 'Uploaded file')
+    } else {
+      setSrtMethod('url')
+      setSrtFileName('')
+    }
     setShowMediaSettings(false)
     
     setSelectedMovie(movie)
@@ -522,6 +534,8 @@ export default function Library() {
                     setCurrentQueueIndex(0)
                     setShowMediaSettings(false)
                     setMediaConfig({ videoUrl: '', srtUrl: '' })
+                    setSrtMethod('url')
+                    setSrtFileName('')
                   }}
                   className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
                 >
@@ -634,39 +648,114 @@ export default function Library() {
 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Subtitle URL (SRT file)
+                    Subtitle Source
                   </label>
-                  <input
-                    type="text"
-                    value={mediaConfig.srtUrl || ''}
-                    onChange={(e) => setMediaConfig({ ...mediaConfig, srtUrl: e.target.value })}
-                    className="input-field"
-                    placeholder="https://example.com/subtitles.srt"
-                  />
+                  <div className="flex space-x-4 mb-3">
+                    <button
+                      onClick={() => {
+                        setSrtMethod('url')
+                        setMediaConfig({ ...mediaConfig, srtUrl: '' })
+                        setSrtFileName('')
+                      }}
+                      className={`flex-1 px-4 py-2 rounded-lg border-2 transition-colors ${
+                        srtMethod === 'url'
+                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                          : 'border-slate-300 dark:border-slate-600'
+                      }`}
+                    >
+                      URL
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSrtMethod('file')
+                        setMediaConfig({ ...mediaConfig, srtUrl: '' })
+                      }}
+                      className={`flex-1 px-4 py-2 rounded-lg border-2 transition-colors ${
+                        srtMethod === 'file'
+                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                          : 'border-slate-300 dark:border-slate-600'
+                      }`}
+                    >
+                      Upload File
+                    </button>
+                  </div>
+                  
+                  {srtMethod === 'url' ? (
+                    <input
+                      type="text"
+                      value={isLocalSrtContent(mediaConfig.srtUrl) ? '' : (mediaConfig.srtUrl || '')}
+                      onChange={(e) => setMediaConfig({ ...mediaConfig, srtUrl: e.target.value })}
+                      className="input-field"
+                      placeholder="https://example.com/subtitles.srt"
+                    />
+                  ) : (
+                    <div className="space-y-2">
+                      <input
+                        type="file"
+                        accept=".srt,.txt"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0]
+                          if (!file) return
+                          
+                          try {
+                            const content = await file.text()
+                            setMediaConfig({ ...mediaConfig, srtUrl: createLocalSrtUrl(content) })
+                            setSrtFileName(file.name)
+                            // Store filename for later reference
+                            if (selectedMovie) {
+                              localStorage.setItem(`movie-srt-filename-${selectedMovie.id}`, file.name)
+                            }
+                          } catch (error) {
+                            console.error('Error reading file:', error)
+                            alert('Error reading subtitle file: ' + error.message)
+                          }
+                        }}
+                        className="input-field"
+                      />
+                      {srtFileName && (
+                        <p className="text-sm text-slate-600 dark:text-slate-400">
+                          Selected: {srtFileName}
+                        </p>
+                      )}
+                      {isLocalSrtContent(mediaConfig.srtUrl) && !srtFileName && (
+                        <p className="text-sm text-green-600 dark:text-green-400">
+                          ✓ Subtitle file already uploaded
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex gap-2">
                   <button
                     onClick={async () => {
-                      if (!mediaConfig.videoUrl || !mediaConfig.srtUrl) {
-                        alert('Please enter both video and subtitle URLs')
+                      if (!mediaConfig.videoUrl) {
+                        alert('Please enter a video URL')
+                        return
+                      }
+                      if (!mediaConfig.srtUrl) {
+                        alert(srtMethod === 'url' 
+                          ? 'Please enter a subtitle URL or upload a file' 
+                          : 'Please upload a subtitle file')
                         return
                       }
                       try {
                         await setMovieMediaConfigPersisted(selectedMovie.id, {
                           videoUrl: mediaConfig.videoUrl.trim(),
-                          srtUrl: mediaConfig.srtUrl.trim()
+                          srtUrl: isLocalSrtContent(mediaConfig.srtUrl) 
+                            ? mediaConfig.srtUrl 
+                            : mediaConfig.srtUrl.trim()
                         })
-                        alert('Media URLs saved successfully!')
+                        alert('Media configuration saved successfully!')
                         setShowMediaSettings(false)
                       } catch (error) {
                         console.error('Error saving media config:', error)
-                        alert('Error saving URLs: ' + error.message)
+                        alert('Error saving configuration: ' + error.message)
                       }
                     }}
                     className="btn-primary"
                   >
-                    Save URLs
+                    Save Configuration
                   </button>
                   <button
                     onClick={() => setShowMediaSettings(false)}
