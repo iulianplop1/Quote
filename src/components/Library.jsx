@@ -25,7 +25,7 @@ import {
   isElevenLabsAvailable,
 } from '../lib/textToSpeech'
 import { playOriginalQuoteSegment } from '../lib/originalAudio'
-import { getMovieMediaConfigPersisted, setMovieMediaConfigPersisted, isLocalSrtContent, createLocalSrtUrl, getLocalSrtContent } from '../lib/mediaConfig'
+import { getMovieMediaConfigPersisted, setMovieMediaConfigPersisted, isLocalSrtContent, createLocalSrtUrl, getLocalSrtContent, isLocalAudioContent, createLocalAudioUrl, getLocalAudioContent } from '../lib/mediaConfig'
 import { extractVideoUrlFromPage } from '../lib/videoUrlExtractor'
 
 export default function Library() {
@@ -51,10 +51,12 @@ export default function Library() {
   const [browserVoices, setBrowserVoices] = useState([])
   const [loadingVoices, setLoadingVoices] = useState(false)
   const [showMediaSettings, setShowMediaSettings] = useState(false)
-  const [mediaConfig, setMediaConfig] = useState({ videoUrl: '', srtUrl: '' })
+  const [mediaConfig, setMediaConfig] = useState({ videoUrl: '', audioUrl: '', srtUrl: '' })
   const [srtMethod, setSrtMethod] = useState('url') // 'url' or 'file'
   const [srtFileName, setSrtFileName] = useState('')
   const [extractingVideoUrl, setExtractingVideoUrl] = useState(false)
+  const [audioMethod, setAudioMethod] = useState('url') // 'url' or 'file'
+  const [audioFileName, setAudioFileName] = useState('')
 
   useEffect(() => {
     loadMovies()
@@ -535,9 +537,11 @@ export default function Library() {
                     setIsPlayingAll(false)
                     setCurrentQueueIndex(0)
                     setShowMediaSettings(false)
-                    setMediaConfig({ videoUrl: '', srtUrl: '' })
+                    setMediaConfig({ videoUrl: '', audioUrl: '', srtUrl: '' })
                     setSrtMethod('url')
                     setSrtFileName('')
+                    setAudioMethod('url')
+                    setAudioFileName('')
                   }}
                   className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
                 >
@@ -637,7 +641,89 @@ export default function Library() {
                 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Video URL (must end in .mp4 or .m3u8)
+                    Audio Source (optional - will be used if provided, otherwise video will be used)
+                  </label>
+                  <div className="flex space-x-4 mb-3">
+                    <button
+                      onClick={() => {
+                        setAudioMethod('url')
+                        setMediaConfig({ ...mediaConfig, audioUrl: '' })
+                        setAudioFileName('')
+                      }}
+                      className={`flex-1 px-4 py-2 rounded-lg border-2 transition-colors ${
+                        audioMethod === 'url'
+                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                          : 'border-slate-300 dark:border-slate-600'
+                      }`}
+                    >
+                      URL
+                    </button>
+                    <button
+                      onClick={() => {
+                        setAudioMethod('file')
+                        setMediaConfig({ ...mediaConfig, audioUrl: '' })
+                      }}
+                      className={`flex-1 px-4 py-2 rounded-lg border-2 transition-colors ${
+                        audioMethod === 'file'
+                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                          : 'border-slate-300 dark:border-slate-600'
+                      }`}
+                    >
+                      Upload File
+                    </button>
+                  </div>
+                  
+                  {audioMethod === 'url' ? (
+                    <input
+                      type="text"
+                      value={isLocalAudioContent(mediaConfig.audioUrl) ? '' : (mediaConfig.audioUrl || '')}
+                      onChange={(e) => setMediaConfig({ ...mediaConfig, audioUrl: e.target.value })}
+                      className="input-field mb-2"
+                      placeholder="https://example.com/audio.mp3"
+                    />
+                  ) : (
+                    <div className="space-y-2 mb-2">
+                      <input
+                        type="file"
+                        accept=".mp3,.wav,.ogg,.m4a,.aac"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0]
+                          if (!file) return
+                          
+                          try {
+                            // Read file as base64
+                            const arrayBuffer = await file.arrayBuffer()
+                            const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+                            const dataUrl = `data:${file.type || 'audio/mpeg'};base64,${base64}`
+                            setMediaConfig({ ...mediaConfig, audioUrl: createLocalAudioUrl(dataUrl) })
+                            setAudioFileName(file.name)
+                            if (selectedMovie) {
+                              localStorage.setItem(`movie-audio-filename-${selectedMovie.id}`, file.name)
+                            }
+                          } catch (error) {
+                            console.error('Error reading audio file:', error)
+                            alert('Error reading audio file: ' + error.message)
+                          }
+                        }}
+                        className="input-field"
+                      />
+                      {audioFileName && (
+                        <p className="text-sm text-slate-600 dark:text-slate-400">
+                          Selected: {audioFileName}
+                        </p>
+                      )}
+                      {isLocalAudioContent(mediaConfig.audioUrl) && !audioFileName && (
+                        <p className="text-sm text-green-600 dark:text-green-400">
+                          ✓ Audio file already uploaded
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Video URL (must end in .mp4 or .m3u8) - used if audio is not provided
                   </label>
                   <div className="flex gap-2">
                     <input
@@ -798,8 +884,8 @@ export default function Library() {
                 <div className="flex gap-2">
                   <button
                     onClick={async () => {
-                      if (!mediaConfig.videoUrl) {
-                        alert('Please enter a video URL')
+                      if (!mediaConfig.videoUrl && !mediaConfig.audioUrl) {
+                        alert('Please enter either a video URL or upload an audio file')
                         return
                       }
                       if (!mediaConfig.srtUrl) {
@@ -811,6 +897,9 @@ export default function Library() {
                       try {
                         await setMovieMediaConfigPersisted(selectedMovie.id, {
                           videoUrl: mediaConfig.videoUrl.trim(),
+                          audioUrl: isLocalAudioContent(mediaConfig.audioUrl)
+                            ? mediaConfig.audioUrl
+                            : mediaConfig.audioUrl.trim(),
                           srtUrl: isLocalSrtContent(mediaConfig.srtUrl) 
                             ? mediaConfig.srtUrl 
                             : mediaConfig.srtUrl.trim()
@@ -902,12 +991,12 @@ export default function Library() {
                                     if (!inputSrt) return
                                     videoUrl = inputVideo.trim()
                                     srtUrl = inputSrt.trim()
-                                    await setMovieMediaConfigPersisted(selectedMovie.id, { videoUrl, srtUrl })
+                                    await setMovieMediaConfigPersisted(selectedMovie.id, { videoUrl, audioUrl: mediaConfig.audioUrl, srtUrl })
                                     // Update local state
-                                    setMediaConfig({ videoUrl, srtUrl })
+                                    setMediaConfig({ videoUrl, audioUrl: mediaConfig.audioUrl, srtUrl })
                                   }
                                   const quoteText = `"${quote.quote}"${quote.character ? ` by ${quote.character}` : ''}`
-                                  await playOriginalQuoteSegment(quoteText, videoUrl, srtUrl, {
+                                  await playOriginalQuoteSegment(quoteText, videoUrl, mediaConfig.audioUrl, srtUrl, {
                                     onStart: () => {
                                       setPlayingQuoteId(quote.id)
                                       setIsPausedState(false)

@@ -193,6 +193,142 @@ export async function fetchSrt(srtUrl) {
   }
 }
 
+// Play a segment from audioUrl between [startMs, endMs] using a hidden <audio>
+// Returns a function to stop playback.
+export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onError } = {}) {
+  // Check if this is local audio content
+  let audioSrc = audioUrl
+  if (audioUrl && audioUrl.startsWith('data:local-audio:')) {
+    const content = audioUrl.substring('data:local-audio:'.length)
+    if (content === 'stored') {
+      onError?.(new Error('Audio content marker found but actual content is missing. Please re-upload your audio file.'))
+      return () => {}
+    }
+    // The content should be a data URL (data:audio/mpeg;base64,...)
+    // Use it directly as the audio source
+    audioSrc = content
+  }
+  
+  // Reuse a global hidden audio element if possible
+  let audio = document.getElementById('original-audio-hidden-audio')
+  if (!audio) {
+    audio = document.createElement('audio')
+    audio.id = 'original-audio-hidden-audio'
+    audio.style.position = 'fixed'
+    audio.style.left = '-9999px'
+    document.body.appendChild(audio)
+  }
+  
+  audio.currentTime = Math.max(0, startMs / 1000)
+  const durationSec = Math.max(0.1, (endMs - startMs) / 1000)
+  let ended = false
+  let errorReported = false
+  
+  const clearTimers = () => {
+    audio.oncanplay = null
+    audio.onerror = null
+    audio.onloadstart = null
+    audio.onstalled = null
+    audio.onabort = null
+  }
+  
+  const reportError = (error) => {
+    if (errorReported) return
+    errorReported = true
+    clearTimers()
+    
+    let errorMessage = 'Audio playback error'
+    if (error?.message) {
+      errorMessage = error.message
+    } else if (typeof error === 'string') {
+      errorMessage = error
+    } else if (error?.code) {
+      switch (error.code) {
+        case 1:
+          errorMessage = 'Audio playback was aborted. The audio URL may be invalid or inaccessible.'
+          break
+        case 2:
+          errorMessage = 'Network error while loading audio. Please check your internet connection.'
+          break
+        case 3:
+          errorMessage = 'Audio decoding error. The audio format may not be supported.'
+          break
+        case 4:
+          errorMessage = 'Audio format not supported. Please use .mp3, .wav, .ogg, or .m4a formats.'
+          break
+        default:
+          errorMessage = `Audio playback error (code: ${error.code}).`
+      }
+    }
+    
+    onError?.(new Error(errorMessage))
+  }
+  
+  audio.src = audioSrc
+  audio.volume = 1.0
+  
+  audio.onloadstart = () => {
+    // Audio started loading
+  }
+  
+  audio.oncanplay = () => {
+    try {
+      onStart && onStart()
+      audio.currentTime = Math.max(0, startMs / 1000)
+      audio.play().then(() => {
+        // Stop after duration
+        setTimeout(() => {
+          if (ended) return
+          ended = true
+          try {
+            audio.pause()
+            onEnd && onEnd()
+          } catch (e) {
+            reportError(e)
+          }
+        }, durationSec * 1000)
+      }).catch((e) => {
+        reportError(e)
+      })
+    } catch (e) {
+      reportError(e)
+    }
+  }
+  
+  audio.onerror = (e) => {
+    const mediaError = audio.error
+    if (mediaError) {
+      reportError(mediaError)
+    } else {
+      reportError('Unknown audio playback error.')
+    }
+  }
+  
+  audio.onstalled = () => {
+    reportError('Audio loading stalled.')
+  }
+  
+  audio.onabort = () => {
+    reportError('Audio loading was aborted.')
+  }
+  
+  audio.load()
+  
+  // Stop function
+  return () => {
+    try {
+      ended = true
+      clearTimers()
+      audio.pause()
+      audio.src = ''
+      // Clean up blob URL if we created one
+      if (audioSrc.startsWith('blob:')) {
+        URL.revokeObjectURL(audioSrc)
+      }
+    } catch {}
+  }
+}
+
 // Play a segment from videoUrl between [startMs, endMs] using a hidden <video>
 // Returns a function to stop playback.
 export function playVideoSegment(videoUrl, startMs, endMs, { onStart, onEnd, onError } = {}) {

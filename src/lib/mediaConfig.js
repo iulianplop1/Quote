@@ -4,11 +4,16 @@ import { supabase } from './supabase'
 
 const LS_PREFIX = 'movie-media-'
 const LS_SRT_PREFIX = 'movie-srt-content-'
+const LS_AUDIO_PREFIX = 'movie-audio-content-'
 
 // Check if srtUrl is actually local file content (starts with special prefix)
 const LOCAL_SRT_PREFIX = 'data:local-srt:'
+const LOCAL_AUDIO_PREFIX = 'data:local-audio:'
 export function isLocalSrtContent(srtUrl) {
   return srtUrl && srtUrl.startsWith(LOCAL_SRT_PREFIX)
+}
+export function isLocalAudioContent(audioUrl) {
+  return audioUrl && audioUrl.startsWith(LOCAL_AUDIO_PREFIX)
 }
 
 // Extract content from local SRT data URL
@@ -23,6 +28,17 @@ export function getLocalSrtContent(srtUrl) {
 export function createLocalSrtUrl(content) {
   return LOCAL_SRT_PREFIX + content
 }
+// Create a local audio data URL from content
+export function createLocalAudioUrl(content) {
+  return LOCAL_AUDIO_PREFIX + content
+}
+// Extract content from local audio data URL
+export function getLocalAudioContent(audioUrl) {
+  if (isLocalAudioContent(audioUrl)) {
+    return audioUrl.substring(LOCAL_AUDIO_PREFIX.length)
+  }
+  return null
+}
 
 export async function getMovieMediaConfigPersisted(movieId) {
   try {
@@ -31,7 +47,7 @@ export async function getMovieMediaConfigPersisted(movieId) {
     // Try reading from movie_media table if it exists
     const { data, error } = await supabase
       .from('movie_media')
-      .select('video_url, srt_url')
+      .select('video_url, audio_url, srt_url')
       .eq('user_id', user.id)
       .eq('movie_id', movieId)
       .maybeSingle()
@@ -44,7 +60,7 @@ export async function getMovieMediaConfigPersisted(movieId) {
       return getMovieMediaConfigLocal(movieId)
     }
     if (data) {
-      const cfg = { videoUrl: data.video_url || '', srtUrl: data.srt_url || '' }
+      const cfg = { videoUrl: data.video_url || '', audioUrl: data.audio_url || '', srtUrl: data.srt_url || '' }
       // If srtUrl is a marker for local storage, load it from localStorage
       if (cfg.srtUrl === LOCAL_SRT_PREFIX + 'stored') {
         const localContent = localStorage.getItem(LS_SRT_PREFIX + movieId)
@@ -72,7 +88,7 @@ export async function getMovieMediaConfigPersisted(movieId) {
   }
 }
 
-export async function setMovieMediaConfigPersisted(movieId, { videoUrl, srtUrl }) {
+export async function setMovieMediaConfigPersisted(movieId, { videoUrl, audioUrl, srtUrl }) {
   // If srtUrl is local content, store it separately in localStorage
   let srtUrlToStore = srtUrl || ''
   if (isLocalSrtContent(srtUrl)) {
@@ -85,13 +101,24 @@ export async function setMovieMediaConfigPersisted(movieId, { videoUrl, srtUrl }
     localStorage.removeItem(LS_SRT_PREFIX + movieId)
   }
   
-  setMovieMediaConfigLocal(movieId, { videoUrl, srtUrl: srtUrlToStore })
+  // Handle audioUrl storage
+  let audioUrlToStore = audioUrl || ''
+  if (isLocalAudioContent(audioUrl)) {
+    const content = getLocalAudioContent(audioUrl)
+    localStorage.setItem(LS_AUDIO_PREFIX + movieId, content)
+    audioUrlToStore = LOCAL_AUDIO_PREFIX + 'stored'
+  } else {
+    localStorage.removeItem(LS_AUDIO_PREFIX + movieId)
+  }
+  
+  setMovieMediaConfigLocal(movieId, { videoUrl, audioUrl: audioUrlToStore, srtUrl: srtUrlToStore })
   
   try {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return false
     // Only store URLs in Supabase, not file content
     const srtUrlForSupabase = isLocalSrtContent(srtUrl) ? LOCAL_SRT_PREFIX + 'stored' : (srtUrl || '')
+    const audioUrlForSupabase = isLocalAudioContent(audioUrl) ? LOCAL_AUDIO_PREFIX + 'stored' : (audioUrl || '')
     // Upsert into movie_media if exists
     const { error } = await supabase
       .from('movie_media')
@@ -99,6 +126,7 @@ export async function setMovieMediaConfigPersisted(movieId, { videoUrl, srtUrl }
         user_id: user.id,
         movie_id: movieId,
         video_url: videoUrl || '',
+        audio_url: audioUrlForSupabase,
         srt_url: srtUrlForSupabase,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'user_id,movie_id' })
@@ -119,7 +147,7 @@ export async function setMovieMediaConfigPersisted(movieId, { videoUrl, srtUrl }
 export function getMovieMediaConfigLocal(movieId) {
   try {
     const raw = localStorage.getItem(LS_PREFIX + movieId)
-    const cfg = raw ? JSON.parse(raw) : { videoUrl: '', srtUrl: '' }
+    const cfg = raw ? JSON.parse(raw) : { videoUrl: '', audioUrl: '', srtUrl: '' }
     
     // Check if srtUrl is a marker for local storage (could be stored with or without prefix)
     const marker = LOCAL_SRT_PREFIX + 'stored'
@@ -160,14 +188,39 @@ export function getMovieMediaConfigLocal(movieId) {
       // Otherwise, it's already the full content, keep it as is
     }
     
+    // Handle audioUrl local storage
+    const audioMarker = LOCAL_AUDIO_PREFIX + 'stored'
+    const isAudioMarker = cfg.audioUrl === audioMarker || cfg.audioUrl === 'stored' || 
+                         (isLocalAudioContent(cfg.audioUrl) && getLocalAudioContent(cfg.audioUrl) === 'stored')
+    
+    if (isAudioMarker) {
+      const localAudioContent = localStorage.getItem(LS_AUDIO_PREFIX + movieId)
+      if (localAudioContent && localAudioContent.trim()) {
+        cfg.audioUrl = createLocalAudioUrl(localAudioContent)
+      } else {
+        console.warn(`Local audio content not found for movie ${movieId}`)
+        cfg.audioUrl = ''
+      }
+    } else if (isLocalAudioContent(cfg.audioUrl)) {
+      const content = getLocalAudioContent(cfg.audioUrl)
+      if (!content || content === 'stored' || content.trim() === '') {
+        const localAudioContent = localStorage.getItem(LS_AUDIO_PREFIX + movieId)
+        if (localAudioContent && localAudioContent.trim()) {
+          cfg.audioUrl = createLocalAudioUrl(localAudioContent)
+        } else {
+          cfg.audioUrl = ''
+        }
+      }
+    }
+    
     return cfg
   } catch (error) {
     console.error('Error loading movie media config:', error)
-    return { videoUrl: '', srtUrl: '' }
+    return { videoUrl: '', audioUrl: '', srtUrl: '' }
   }
 }
 
-export function setMovieMediaConfigLocal(movieId, { videoUrl, srtUrl }) {
+export function setMovieMediaConfigLocal(movieId, { videoUrl, audioUrl, srtUrl }) {
   // If srtUrl is local content, store it separately
   let srtUrlToStore = srtUrl || ''
   if (isLocalSrtContent(srtUrl)) {
@@ -178,7 +231,21 @@ export function setMovieMediaConfigLocal(movieId, { videoUrl, srtUrl }) {
     localStorage.removeItem(LS_SRT_PREFIX + movieId)
   }
   
-  localStorage.setItem(LS_PREFIX + movieId, JSON.stringify({ videoUrl: videoUrl || '', srtUrl: srtUrlToStore }))
+  // If audioUrl is local content, store it separately
+  let audioUrlToStore = audioUrl || ''
+  if (isLocalAudioContent(audioUrl)) {
+    const content = getLocalAudioContent(audioUrl)
+    localStorage.setItem(LS_AUDIO_PREFIX + movieId, content)
+    audioUrlToStore = LOCAL_AUDIO_PREFIX + 'stored'
+  } else {
+    localStorage.removeItem(LS_AUDIO_PREFIX + movieId)
+  }
+  
+  localStorage.setItem(LS_PREFIX + movieId, JSON.stringify({ 
+    videoUrl: videoUrl || '', 
+    audioUrl: audioUrlToStore,
+    srtUrl: srtUrlToStore 
+  }))
 }
 
 
