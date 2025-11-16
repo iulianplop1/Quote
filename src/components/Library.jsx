@@ -864,6 +864,35 @@ export default function Library() {
                           if (!file) return
                           
                           try {
+                            // Check file extension
+                            const fileName = file.name.toLowerCase()
+                            const isAudioFile = fileName.endsWith('.mp3') || fileName.endsWith('.wav') || 
+                                                fileName.endsWith('.ogg') || fileName.endsWith('.m4a') || 
+                                                fileName.endsWith('.aac') || fileName.endsWith('.flac')
+                            
+                            if (isAudioFile) {
+                              alert('Error: You selected an audio file. Please select a subtitle file (.srt or .txt format).\n\nTo upload audio, use the "Audio Source" section above.')
+                              return
+                            }
+                            
+                            // Read first few bytes to check for binary file signatures
+                            const arrayBuffer = await file.arrayBuffer()
+                            const uint8Array = new Uint8Array(arrayBuffer.slice(0, 10))
+                            
+                            // Check for common binary file signatures
+                            // ID3 (MP3): 49 44 33 (ASCII "ID3")
+                            if (uint8Array[0] === 0x49 && uint8Array[1] === 0x44 && uint8Array[2] === 0x33) {
+                              alert('Error: This appears to be an MP3 audio file, not a subtitle file.\n\nPlease select a valid SRT subtitle file (.srt format).\n\nTo upload audio, use the "Audio Source" section above.')
+                              return
+                            }
+                            
+                            // Check for other binary formats
+                            const isBinary = uint8Array.some(byte => byte === 0 && uint8Array.indexOf(byte) < 5)
+                            if (isBinary && !fileName.endsWith('.srt') && !fileName.endsWith('.txt')) {
+                              alert('Error: This appears to be a binary file, not a text-based subtitle file.\n\nPlease select a valid SRT subtitle file (.srt format).')
+                              return
+                            }
+                            
                             const content = await file.text()
                             
                             // Validate SRT content
@@ -1016,19 +1045,10 @@ export default function Library() {
                                       setShowMediaSettings(true)
                                       return
                                     }
-                                    // Fallback to old prompt method if user cancels
-                                    const inputVideo = prompt('Enter video URL for this movie (from your licensed source):', videoUrl || '')
-                                    if (!inputVideo) return
-                                    const inputSrt = prompt('Enter subtitles (SRT) URL for this movie:', srtUrl || '')
-                                    if (!inputSrt) return
-                                    videoUrl = inputVideo.trim()
-                                    srtUrl = inputSrt.trim()
-                                    await setMovieMediaConfigPersisted(selectedMovie.id, { videoUrl, audioUrl: mediaConfig.audioUrl, srtUrl })
-                                    // Update local state
-                                    setMediaConfig({ videoUrl, audioUrl: mediaConfig.audioUrl, srtUrl })
+                                    return // Don't proceed if user cancels
                                   }
                                   const quoteText = `"${quote.quote}"${quote.character ? ` by ${quote.character}` : ''}`
-                                  await playOriginalQuoteSegment(quoteText, videoUrl, mediaConfig.audioUrl, srtUrl, {
+                                  await playOriginalQuoteSegment(quoteText, videoUrl, srtUrl, {
                                     onStart: () => {
                                       setPlayingQuoteId(quote.id)
                                       setIsPausedState(false)
@@ -1040,7 +1060,16 @@ export default function Library() {
                                     onError: (e) => {
                                       console.error('Original clip playback error:', e)
                                       const errorMsg = e?.message || 'Could not play original clip'
-                                      alert(`Error: ${errorMsg}\n\nMake sure you're using:\n- Direct video URLs (ending in .mp4 or .m3u8), not page URLs\n- Direct SRT file URLs that allow CORS\n- Both URLs must be accessible from your browser`)
+                                      
+                                      // If subtitle is not configured, offer to open settings
+                                      if (errorMsg.includes('Subtitle URL or file is not configured')) {
+                                        const shouldConfigure = confirm('Subtitle is not configured. Would you like to configure it now?')
+                                        if (shouldConfigure) {
+                                          setShowMediaSettings(true)
+                                        }
+                                      } else {
+                                        alert(`Error: ${errorMsg}\n\nMake sure you're using:\n- Direct video URLs (ending in .mp4 or .m3u8), not page URLs\n- Direct SRT file URLs that allow CORS\n- Both URLs must be accessible from your browser`)
+                                      }
                                       setPlayingQuoteId(null)
                                       setIsPausedState(false)
                                     }

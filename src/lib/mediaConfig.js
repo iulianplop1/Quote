@@ -217,26 +217,51 @@ export async function setMovieMediaConfigPersisted(movieId, { videoUrl, audioUrl
     const srtUrlForSupabase = isLocalSrtContent(srtUrl) ? LOCAL_SRT_PREFIX + 'stored' : (srtUrl || '')
     const audioUrlForSupabase = isLocalAudioContent(audioUrl) ? LOCAL_AUDIO_PREFIX + 'stored' : (audioUrl || '')
     // Upsert into movie_media if exists
+    // Build the data object without updated_at first, then add it if needed
+    const upsertData = {
+      user_id: user.id,
+      movie_id: movieId,
+      video_url: videoUrl || '',
+      audio_url: audioUrlForSupabase || '',
+      srt_url: srtUrlForSupabase || '',
+    }
+    
+    // Try with updated_at first, fall back without it if it fails
     const { error } = await supabase
       .from('movie_media')
       .upsert({
-        user_id: user.id,
-        movie_id: movieId,
-        video_url: videoUrl || '',
-        audio_url: audioUrlForSupabase,
-        srt_url: srtUrlForSupabase,
+        ...upsertData,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'user_id,movie_id' })
-    if (error) {
-      // Table may not exist (404) or other error; silently ignore
-      // PGRST116 = not found, 400 = bad request (might be schema/permission issue)
-      if (error.code !== 'PGRST116' && error.code !== 'PGRST301') {
-        // Only log non-404/400 errors
-        console.debug('movie_media table not accessible, using localStorage only:', error.message, error.code)
-      }
-      return false
+    
+    // If no error, success!
+    if (!error) {
+      return true
     }
-    return true
+    
+    // If error is due to updated_at column, try without it
+    if (error.code === 'PGRST301' || error.message?.includes('column') || error.message?.includes('updated_at')) {
+      const { error: error2 } = await supabase
+        .from('movie_media')
+        .upsert(upsertData, { onConflict: 'user_id,movie_id' })
+      
+      if (error2) {
+        // Use the second error if it exists
+        if (error2.code !== 'PGRST116' && error2.code !== 'PGRST301') {
+          console.debug('movie_media table not accessible, using localStorage only:', error2.message, error2.code)
+        }
+        return false
+      }
+      return true
+    }
+    
+    // Other errors - table may not exist (404) or other error; silently ignore
+    // PGRST116 = not found, 400 = bad request (might be schema/permission issue)
+    if (error.code !== 'PGRST116' && error.code !== 'PGRST301') {
+      // Only log non-404/400 errors
+      console.debug('movie_media table not accessible, using localStorage only:', error.message, error.code)
+    }
+    return false
   } catch {
     return false
   }

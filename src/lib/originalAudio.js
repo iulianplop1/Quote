@@ -24,6 +24,11 @@ export function parseSrtToEntries(srtText) {
     throw new Error('SRT content is empty or invalid. Please ensure you uploaded a valid SRT file.')
   }
   
+  // Check if this is actually a binary file (like MP3) that was incorrectly read as text
+  if (srtText.startsWith('ID3') || srtText.startsWith('\x00') || srtText.includes('\x00')) {
+    throw new Error('Error: This appears to be a binary file (possibly an audio file like MP3), not a subtitle file. Please upload a valid SRT subtitle file (.srt format).')
+  }
+  
   const trimmed = srtText.trim()
   if (!trimmed) {
     throw new Error('SRT file appears to be empty. Please check your subtitle file.')
