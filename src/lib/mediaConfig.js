@@ -167,8 +167,13 @@ export async function getMovieMediaConfigPersisted(movieId) {
         }
       }
       
-      // Cache to localStorage too
-      await setMovieMediaConfigLocal(movieId, cfg)
+      // Don't call setMovieMediaConfigLocal here - it would overwrite with markers
+      // The cfg already has the full content loaded, so just update the main config entry
+      localStorage.setItem(LS_PREFIX + movieId, JSON.stringify({ 
+        videoUrl: cfg.videoUrl || '', 
+        audioUrl: cfg.audioUrl || '',
+        srtUrl: cfg.srtUrl || '' 
+      }))
       return cfg
     }
     return await getMovieMediaConfigLocal(movieId)
@@ -182,7 +187,15 @@ export async function setMovieMediaConfigPersisted(movieId, { videoUrl, audioUrl
   let srtUrlToStore = srtUrl || ''
   if (isLocalSrtContent(srtUrl)) {
     const content = getLocalSrtContent(srtUrl)
+    console.log(`[setMovieMediaConfigPersisted] Storing SRT content for movie ${movieId}, length:`, content ? content.length : 0)
+    
+    if (!content || content === 'stored' || content.trim() === '') {
+      console.error(`[setMovieMediaConfigPersisted] SRT content is empty or marker! Content:`, content ? content.substring(0, 50) : 'null')
+      throw new Error('SRT file content is missing. Please re-upload your subtitle file.')
+    }
+    
     localStorage.setItem(LS_SRT_PREFIX + movieId, content)
+    console.log(`[setMovieMediaConfigPersisted] SRT content stored successfully, length:`, content.length)
     // Store a marker in the main config
     srtUrlToStore = LOCAL_SRT_PREFIX + 'stored'
   } else {
@@ -194,7 +207,15 @@ export async function setMovieMediaConfigPersisted(movieId, { videoUrl, audioUrl
   let audioUrlToStore = audioUrl || ''
   if (isLocalAudioContent(audioUrl)) {
     const content = getLocalAudioContent(audioUrl)
+    console.log(`[setMovieMediaConfigPersisted] Storing audio content for movie ${movieId}, content length:`, content ? content.length : 0)
+    
+    if (!content || content === 'stored' || (typeof content === 'string' && content.trim() === '')) {
+      console.error(`[setMovieMediaConfigPersisted] Audio content is empty or marker!`)
+      throw new Error('Audio file content is missing. Please re-upload your audio file.')
+    }
+    
     const contentSize = new Blob([content]).size
+    console.log(`[setMovieMediaConfigPersisted] Audio content size:`, contentSize, 'bytes')
     const storageKey = LS_AUDIO_PREFIX + movieId
     
     try {
@@ -443,8 +464,26 @@ export async function setMovieMediaConfigLocal(movieId, { videoUrl, audioUrl, sr
   let srtUrlToStore = srtUrl || ''
   if (isLocalSrtContent(srtUrl)) {
     const content = getLocalSrtContent(srtUrl)
-    localStorage.setItem(LS_SRT_PREFIX + movieId, content)
-    srtUrlToStore = LOCAL_SRT_PREFIX + 'stored'
+    console.log(`[setMovieMediaConfigLocal] SRT content extracted, length:`, content ? content.length : 0)
+    
+    // Don't overwrite existing content with a marker!
+    if (content && content !== 'stored' && content.trim() !== '') {
+      localStorage.setItem(LS_SRT_PREFIX + movieId, content)
+      console.log(`[setMovieMediaConfigLocal] SRT content stored, length:`, content.length)
+      srtUrlToStore = LOCAL_SRT_PREFIX + 'stored'
+    } else {
+      // If it's a marker, don't overwrite - keep existing content
+      console.log(`[setMovieMediaConfigLocal] SRT is marker, not overwriting existing content`)
+      // Check if we already have content stored
+      const existingContent = localStorage.getItem(LS_SRT_PREFIX + movieId)
+      if (existingContent && existingContent !== 'stored') {
+        srtUrlToStore = LOCAL_SRT_PREFIX + 'stored'
+      } else {
+        // No existing content, clear it
+        localStorage.removeItem(LS_SRT_PREFIX + movieId)
+        srtUrlToStore = ''
+      }
+    }
   } else {
     localStorage.removeItem(LS_SRT_PREFIX + movieId)
   }
@@ -453,8 +492,33 @@ export async function setMovieMediaConfigLocal(movieId, { videoUrl, audioUrl, sr
   let audioUrlToStore = audioUrl || ''
   if (isLocalAudioContent(audioUrl)) {
     const content = getLocalAudioContent(audioUrl)
-    const contentSize = new Blob([content]).size
-    const storageKey = LS_AUDIO_PREFIX + movieId
+    console.log(`[setMovieMediaConfigLocal] Audio content extracted, length:`, content ? content.length : 0)
+    
+    // Don't overwrite existing content with a marker!
+    if (!content || content === 'stored' || (typeof content === 'string' && content.trim() === '')) {
+      console.log(`[setMovieMediaConfigLocal] Audio is marker, not overwriting existing content`)
+      // Check if we already have content stored
+      const storageKey = LS_AUDIO_PREFIX + movieId
+      const useIndexedDB = localStorage.getItem(storageKey + '-idb') === 'true'
+      let existingContent = null
+      if (useIndexedDB) {
+        existingContent = await getAudioFromIndexedDB(storageKey)
+      } else {
+        existingContent = localStorage.getItem(storageKey)
+      }
+      if (existingContent && existingContent !== 'stored') {
+        audioUrlToStore = LOCAL_AUDIO_PREFIX + 'stored'
+      } else {
+        // No existing content, clear it
+        localStorage.removeItem(storageKey)
+        localStorage.removeItem(storageKey + '-idb')
+        await removeAudioFromIndexedDB(storageKey)
+        audioUrlToStore = ''
+      }
+    } else {
+      // We have actual content, store it
+      const contentSize = new Blob([content]).size
+      const storageKey = LS_AUDIO_PREFIX + movieId
     
     try {
       if (contentSize > MAX_LOCALSTORAGE_SIZE) {

@@ -674,7 +674,17 @@ export default function Library() {
                             
                             const base64 = btoa(binaryString)
                             const dataUrl = `data:${file.type || 'audio/mpeg'};base64,${base64}`
-                            setMediaConfig({ ...mediaConfig, audioUrl: createLocalAudioUrl(dataUrl) })
+                            console.log('Audio file uploaded, base64 length:', base64.length, 'dataUrl length:', dataUrl.length)
+                            
+                            // Validate content is actually there
+                            if (!base64 || base64.length < 100) {
+                              alert('Error: The audio file appears to be empty or corrupted. Please select a valid audio file.')
+                              return
+                            }
+                            
+                            const audioUrl = createLocalAudioUrl(dataUrl)
+                            console.log('Created audio URL, total length:', audioUrl.length)
+                            setMediaConfig({ ...mediaConfig, audioUrl })
                             setAudioFileName(file.name)
                             if (selectedMovie) {
                               localStorage.setItem(`movie-audio-filename-${selectedMovie.id}`, file.name)
@@ -768,7 +778,17 @@ export default function Library() {
                               if (!confirm) return
                             }
                             
-                            setMediaConfig({ ...mediaConfig, srtUrl: createLocalSrtUrl(content) })
+                            console.log('SRT file uploaded, content length:', content.length, 'first 100 chars:', content.substring(0, 100))
+                            
+                            // Validate content is actually there
+                            if (!content || content.trim().length < 10) {
+                              alert('Error: The subtitle file appears to be empty or too small. Please select a valid SRT file.')
+                              return
+                            }
+                            
+                            const srtUrl = createLocalSrtUrl(content)
+                            console.log('Created SRT URL, length:', srtUrl.length)
+                            setMediaConfig({ ...mediaConfig, srtUrl })
                             setSrtFileName(file.name)
                             // Store filename for later reference
                             if (selectedMovie) {
@@ -807,6 +827,32 @@ export default function Library() {
                         return
                       }
                       try {
+                        console.log('Saving media config:', {
+                          audioUrl: mediaConfig.audioUrl ? (mediaConfig.audioUrl.substring(0, 50) + '...') : 'empty',
+                          srtUrl: mediaConfig.srtUrl ? (mediaConfig.srtUrl.substring(0, 50) + '...') : 'empty',
+                          isLocalAudio: isLocalAudioContent(mediaConfig.audioUrl),
+                          isLocalSrt: isLocalSrtContent(mediaConfig.srtUrl)
+                        })
+                        
+                        // Validate that we have actual content, not just markers
+                        if (isLocalAudioContent(mediaConfig.audioUrl)) {
+                          const audioContent = getLocalAudioContent(mediaConfig.audioUrl)
+                          if (!audioContent || audioContent === 'stored' || audioContent.trim() === '') {
+                            alert('Error: Audio file content is missing. Please re-upload your audio file.')
+                            return
+                          }
+                          console.log('Audio content length:', audioContent.length)
+                        }
+                        
+                        if (isLocalSrtContent(mediaConfig.srtUrl)) {
+                          const srtContent = getLocalSrtContent(mediaConfig.srtUrl)
+                          if (!srtContent || srtContent === 'stored' || srtContent.trim() === '') {
+                            alert('Error: Subtitle file content is missing. Please re-upload your subtitle file.')
+                            return
+                          }
+                          console.log('SRT content length:', srtContent.length)
+                        }
+                        
                         await setMovieMediaConfigPersisted(selectedMovie.id, {
                           videoUrl: '', // No longer used
                           audioUrl: isLocalAudioContent(mediaConfig.audioUrl)
