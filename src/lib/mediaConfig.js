@@ -118,8 +118,10 @@ export async function getMovieMediaConfigPersisted(movieId) {
     if (error) {
       // Table might not exist (404) or other error; silently fall back to local
       // PGRST116 = not found, 400 = bad request (might be schema/permission issue)
-      if (error.code !== 'PGRST116' && error.code !== 'PGRST301') {
-        // Only log non-404/400 errors
+      // PGRST301 = bad request (column doesn't exist or wrong format)
+      // Suppress these expected errors completely
+      if (error.code !== 'PGRST116' && error.code !== 'PGRST301' && error.code !== '23505') {
+        // Only log unexpected errors
         console.debug('movie_media table not accessible, using localStorage:', error.message, error.code)
       }
       return await getMovieMediaConfigLocal(movieId)
@@ -279,8 +281,11 @@ export async function setMovieMediaConfigPersisted(movieId, { videoUrl, audioUrl
     
     // Other errors - table may not exist (404) or other error; silently ignore
     // PGRST116 = not found, 400 = bad request (might be schema/permission issue)
-    if (error.code !== 'PGRST116' && error.code !== 'PGRST301') {
-      // Only log non-404/400 errors
+    // PGRST301 = bad request (column doesn't exist or wrong format)
+    // 23505 = unique constraint violation (expected in some cases)
+    // Suppress these expected errors completely
+    if (error.code !== 'PGRST116' && error.code !== 'PGRST301' && error.code !== '23505') {
+      // Only log unexpected errors
       console.debug('movie_media table not accessible, using localStorage only:', error.message, error.code)
     }
     return false

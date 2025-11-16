@@ -279,26 +279,59 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
   }
   
   audio.oncanplay = () => {
+    // Check if playback was already ended/cancelled
+    if (ended) {
+      return
+    }
+    
     try {
       onStart && onStart()
       audio.currentTime = Math.max(0, startMs / 1000)
-      audio.play().then(() => {
-        // Stop after duration
-        setTimeout(() => {
+      
+      // Use a flag to track if play() is in progress
+      let playPromise = null
+      try {
+        playPromise = audio.play()
+      } catch (e) {
+        // If play() throws synchronously, handle it
+        reportError(e)
+        return
+      }
+      
+      if (playPromise) {
+        playPromise.then(() => {
+          // Only set up timeout if playback wasn't ended
           if (ended) return
-          ended = true
-          try {
-            audio.pause()
-            onEnd && onEnd()
-          } catch (e) {
+          
+          // Stop after duration
+          setTimeout(() => {
+            if (ended) return
+            ended = true
+            try {
+              audio.pause()
+              onEnd && onEnd()
+            } catch (e) {
+              // Ignore errors from pause if already ended
+              if (!ended) {
+                reportError(e)
+              }
+            }
+          }, durationSec * 1000)
+        }).catch((e) => {
+          // Ignore "interrupted by pause" errors - they're expected if user stops playback
+          if (e.message && e.message.includes('interrupted by a call to pause')) {
+            // This is expected when stopping playback, don't report as error
+            return
+          }
+          if (!ended) {
             reportError(e)
           }
-        }, durationSec * 1000)
-      }).catch((e) => {
-        reportError(e)
-      })
+        })
+      }
     } catch (e) {
-      reportError(e)
+      if (!ended) {
+        reportError(e)
+      }
     }
   }
   
@@ -326,12 +359,28 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
     try {
       ended = true
       clearTimers()
-      audio.pause()
-      audio.src = ''
-      // Clean up blob URL if we created one
-      if (audioSrc.startsWith('blob:')) {
-        URL.revokeObjectURL(audioSrc)
+      
+      // Only pause if audio is actually playing/loading
+      if (audio && (audio.readyState > 0 || !audio.paused)) {
+        try {
+          audio.pause()
+        } catch (e) {
+          // Ignore pause errors when stopping
+        }
       }
+      
+      // Clear source after a brief delay to avoid interrupting play()
+      setTimeout(() => {
+        try {
+          if (audio) {
+            audio.src = ''
+          }
+          // Clean up blob URL if we created one
+          if (audioSrc && audioSrc.startsWith('blob:')) {
+            URL.revokeObjectURL(audioSrc)
+          }
+        } catch {}
+      }, 100)
     } catch {}
   }
 }
@@ -590,6 +639,14 @@ export async function playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, { on
     
     if (!audioUrl) {
       throw new Error('Audio file is not configured. Please upload an audio file in the media settings.')
+    }
+    
+    // Check if audioUrl is still a marker (shouldn't happen, but handle it)
+    if (audioUrl && audioUrl.startsWith('data:local-audio:')) {
+      const content = audioUrl.substring('data:local-audio:'.length)
+      if (content === 'stored' || content.trim() === 'stored') {
+        throw new Error('Audio file content is missing. The audio file may have been cleared from storage. Please re-upload your audio file in the media settings.')
+      }
     }
     
     const srt = await fetchSrt(srtUrl)
