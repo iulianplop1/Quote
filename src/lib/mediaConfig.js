@@ -387,24 +387,33 @@ export async function getMovieMediaConfigLocal(movieId) {
       const storageKey = LS_AUDIO_PREFIX + movieId
       const useIndexedDB = localStorage.getItem(storageKey + '-idb') === 'true'
       
+      console.log(`[getMovieMediaConfigLocal] Loading audio content for movie ${movieId}, useIndexedDB: ${useIndexedDB}`)
+      
       let localAudioContent = null
       if (useIndexedDB) {
         localAudioContent = await getAudioFromIndexedDB(storageKey)
+        console.log(`[getMovieMediaConfigLocal] Audio content from IndexedDB, type: ${typeof localAudioContent}, length: ${localAudioContent ? (typeof localAudioContent === 'string' ? localAudioContent.length : 'non-string') : 'null'}`)
       } else {
         localAudioContent = localStorage.getItem(storageKey)
+        console.log(`[getMovieMediaConfigLocal] Audio content from localStorage, type: ${typeof localAudioContent}, length: ${localAudioContent ? localAudioContent.length : 'null'}`)
       }
       
       // Check if content exists and is valid
       if (localAudioContent) {
         // For IndexedDB, content might not have trim method, so check differently
         if (typeof localAudioContent === 'string') {
-          if (localAudioContent.trim && localAudioContent.trim()) {
+          // Check if it's a valid data URL or base64 content
+          // Audio content should be long (at least 100 chars for small files, usually much longer)
+          // It can be either a full data URL (data:audio/mpeg;base64,...) or just base64 content
+          const isValidContent = localAudioContent.length > 100
+          
+          if (isValidContent) {
+            // The stored content should be the full data URL (data:audio/mpeg;base64,...)
+            // or just the base64 content. Wrap it with createLocalAudioUrl to create the proper format
             cfg.audioUrl = createLocalAudioUrl(localAudioContent)
-          } else if (localAudioContent.length > 0) {
-            // Even if trim() returns empty, if it has length, it might be valid (could be base64)
-            cfg.audioUrl = createLocalAudioUrl(localAudioContent)
+            console.log(`[getMovieMediaConfigLocal] Audio content loaded successfully, final URL length: ${cfg.audioUrl.length}`)
           } else {
-            console.warn(`Local audio content is empty for movie ${movieId}`)
+            console.warn(`Local audio content is too short or invalid for movie ${movieId}, length: ${localAudioContent.length}`)
             cfg.audioUrl = ''
           }
         } else {
@@ -413,42 +422,53 @@ export async function getMovieMediaConfigLocal(movieId) {
           cfg.audioUrl = ''
         }
       } else {
-        console.warn(`Local audio content not found for movie ${movieId}`)
+        console.warn(`Local audio content not found for movie ${movieId}, storageKey: ${storageKey}, useIndexedDB: ${useIndexedDB}`)
         cfg.audioUrl = ''
       }
     } else if (isLocalAudioContent(cfg.audioUrl)) {
       const content = getLocalAudioContent(cfg.audioUrl)
+      console.log(`[getMovieMediaConfigLocal] Audio URL is local content (not marker), extracted content length: ${content ? content.length : 0}`)
+      
       if (!content || content === 'stored' || (typeof content === 'string' && content.trim() === '')) {
+        console.log(`[getMovieMediaConfigLocal] Audio content is marker/empty, loading from storage...`)
         const storageKey = LS_AUDIO_PREFIX + movieId
         const useIndexedDB = localStorage.getItem(storageKey + '-idb') === 'true'
         
         let localAudioContent = null
         if (useIndexedDB) {
           localAudioContent = await getAudioFromIndexedDB(storageKey)
+          console.log(`[getMovieMediaConfigLocal] Audio content from IndexedDB (fallback), type: ${typeof localAudioContent}, length: ${localAudioContent ? (typeof localAudioContent === 'string' ? localAudioContent.length : 'non-string') : 'null'}`)
         } else {
           localAudioContent = localStorage.getItem(storageKey)
+          console.log(`[getMovieMediaConfigLocal] Audio content from localStorage (fallback), type: ${typeof localAudioContent}, length: ${localAudioContent ? localAudioContent.length : 'null'}`)
         }
         
         // Check if content exists and is valid
         if (localAudioContent) {
           // For IndexedDB, content might not have trim method, so check differently
           if (typeof localAudioContent === 'string') {
-            if (localAudioContent.trim && localAudioContent.trim()) {
+            // Audio content should be long (at least 100 chars for small files, usually much longer)
+            const isValidContent = localAudioContent.length > 100
+            
+            if (isValidContent) {
               cfg.audioUrl = createLocalAudioUrl(localAudioContent)
-            } else if (localAudioContent.length > 0) {
-              // Even if trim() returns empty, if it has length, it might be valid (could be base64)
-              cfg.audioUrl = createLocalAudioUrl(localAudioContent)
+              console.log(`[getMovieMediaConfigLocal] Audio content loaded from storage (fallback), final URL length: ${cfg.audioUrl.length}`)
             } else {
+              console.warn(`Local audio content is too short or invalid for movie ${movieId} (fallback), length: ${localAudioContent.length}`)
               cfg.audioUrl = ''
             }
           } else {
             // If it's not a string, it might be a Blob or other type - try to use it
-            console.warn(`Local audio content is not a string for movie ${movieId}, type: ${typeof localAudioContent}`)
+            console.warn(`Local audio content is not a string for movie ${movieId} (fallback), type: ${typeof localAudioContent}`)
             cfg.audioUrl = ''
           }
         } else {
+          console.warn(`Local audio content not found for movie ${movieId} (fallback)`)
           cfg.audioUrl = ''
         }
+      } else {
+        // Content is already there and valid, keep it as is
+        console.log(`[getMovieMediaConfigLocal] Audio content is already valid, length: ${content.length}`)
       }
     }
     

@@ -682,6 +682,8 @@ export default function Library() {
                               return
                             }
                             
+                            // createLocalAudioUrl expects the full data URL (data:audio/mpeg;base64,...)
+                            // so we pass the dataUrl directly
                             const audioUrl = createLocalAudioUrl(dataUrl)
                             console.log('Created audio URL, total length:', audioUrl.length)
                             setMediaConfig({ ...mediaConfig, audioUrl })
