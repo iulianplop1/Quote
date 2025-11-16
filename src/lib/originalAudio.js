@@ -267,8 +267,10 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
                 const audioEl = document.getElementById('original-audio-hidden-audio')
                 if (audioEl && !checkEnded()) {
                   audioEl.src = blobUrlToCleanup
+                  audioEl.volume = 1.0
+                  audioEl.muted = false
                   audioEl.load()
-                  console.log('[playAudioSegment] Created blob URL via direct conversion, size:', blob.size, 'bytes, mimeType:', mimeType)
+                  console.log('[playAudioSegment] Created blob URL via direct conversion, size:', blob.size, 'bytes, mimeType:', mimeType, 'volume:', audioEl.volume, 'muted:', audioEl.muted)
                 }
               } catch (conversionError) {
                 console.error('[playAudioSegment] Error converting base64 to blob:', conversionError)
@@ -361,7 +363,8 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
   console.log('[playAudioSegment] Setting audio source, type:', typeof audioSrc, 'starts with:', audioSrc ? audioSrc.substring(0, 50) : 'null')
   audio.src = audioSrc
   audio.volume = 1.0
-  console.log('[playAudioSegment] Audio element configured, volume:', audio.volume, 'src length:', audioSrc ? audioSrc.length : 0)
+  audio.muted = false // Explicitly unmute
+  console.log('[playAudioSegment] Audio element configured, volume:', audio.volume, 'muted:', audio.muted, 'src length:', audioSrc ? audioSrc.length : 0)
   
   audio.onloadstart = () => {
     console.log('[playAudioSegment] Audio started loading')
@@ -379,7 +382,8 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
       onStart && onStart()
       const targetTime = Math.max(0, startMs / 1000)
       audio.currentTime = targetTime
-      console.log('[playAudioSegment] Set currentTime to:', targetTime, 'actual:', audio.currentTime)
+      audio.muted = false // Ensure audio is unmuted before playing
+      console.log('[playAudioSegment] Set currentTime to:', targetTime, 'actual:', audio.currentTime, 'muted:', audio.muted, 'volume:', audio.volume)
       
       // Use a flag to track if play() is in progress
       let playPromise = null
