@@ -30,17 +30,45 @@ export function parseSrtToEntries(srtText) {
   }
   
   const entries = []
-  const blocks = trimmed.replace(/\r/g, '').split('\n\n')
+  // Normalize line endings and split by double newlines (or single newline followed by number)
+  let normalized = trimmed.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  
+  // Split by double newlines, but also handle cases where blocks might be separated differently
+  let blocks = normalized.split(/\n\s*\n/)
+  
+  // If we only got one block, try splitting by pattern: number followed by newline and timestamp
+  if (blocks.length === 1 || (blocks.length === 2 && blocks[1].trim() === '')) {
+    // Try splitting by pattern: \n followed by a number and newline
+    blocks = normalized.split(/\n(?=\d+\s*\n\d{2}:\d{2}:\d{2})/)
+    // If still one block, try without the number requirement
+    if (blocks.length <= 1) {
+      blocks = normalized.split(/\n(?=\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,\.]\d{3})/)
+    }
+  }
+  
   let validBlocks = 0
   let totalBlocks = blocks.length
   
   for (const block of blocks) {
-    const lines = block.trim().split('\n')
+    const lines = block.trim().split('\n').map(l => l.trim()).filter(l => l.length > 0)
     if (lines.length < 2) continue
     
-    // index (optional) on line 0 if numeric
-    const timeLine = lines[0].includes('-->') ? lines[0] : lines[1]
-    const textLines = lines[0].includes('-->') ? lines.slice(1) : lines.slice(2)
+    // Find the timestamp line (contains -->)
+    let timeLine = null
+    let timeLineIndex = -1
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes('-->')) {
+        timeLine = lines[i]
+        timeLineIndex = i
+        break
+      }
+    }
+    
+    if (!timeLine) continue
+    
+    // Get text lines (everything after the timestamp line)
+    const textLines = lines.slice(timeLineIndex + 1)
+    
     // Support both comma and period separators for milliseconds (00:00:01,000 or 00:00:01.000)
     const match = timeLine.match(/(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})/)
     if (!match) continue
@@ -48,13 +76,19 @@ export function parseSrtToEntries(srtText) {
     try {
       const startMs = timestampToMs(match[1])
       const endMs = timestampToMs(match[2])
-      const text = textLines.join(' ').replace(/\s+/g, ' ').trim()
+      
+      // Join text lines and clean up HTML tags and extra whitespace
+      let text = textLines.join(' ')
+        .replace(/<[^>]+>/g, '') // Remove HTML tags like <i>, </i>, etc.
+        .replace(/\s+/g, ' ') // Normalize whitespace
+        .trim()
+      
       if (text) {
         entries.push({ startMs, endMs, text })
         validBlocks++
       }
     } catch (e) {
-      console.warn('Error parsing SRT block:', e)
+      console.warn('Error parsing SRT block:', e, 'Block:', block.substring(0, 100))
       continue
     }
   }
@@ -64,7 +98,9 @@ export function parseSrtToEntries(srtText) {
     if (totalBlocks === 0 || (totalBlocks === 1 && blocks[0].trim() === '')) {
       throw new Error('SRT file is empty. Please upload a valid SRT subtitle file with timestamp entries.')
     } else if (validBlocks === 0) {
-      throw new Error(`SRT file format appears invalid. Found ${totalBlocks} blocks but none could be parsed. Please ensure your SRT file follows the standard format:\n\n1\n00:00:01,000 --> 00:00:03,000\nSubtitle text here\n\n2\n00:00:04,000 --> 00:00:06,000\nMore subtitle text`)
+      // Show a sample of the first block for debugging
+      const firstBlockSample = blocks[0].substring(0, 200).replace(/\n/g, '\\n')
+      throw new Error(`SRT file format appears invalid. Found ${totalBlocks} block(s) but none could be parsed.\n\nFirst block sample: ${firstBlockSample}\n\nPlease ensure your SRT file follows the standard format:\n\n1\n00:00:01,000 --> 00:00:03,000\nSubtitle text here\n\n2\n00:00:04,000 --> 00:00:06,000\nMore subtitle text`)
     } else {
       throw new Error('No valid subtitle entries found in SRT file. Please check the file format.')
     }
