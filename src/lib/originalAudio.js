@@ -208,6 +208,7 @@ export async function fetchSrt(srtUrl) {
 export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onError } = {}) {
   // Check if this is local audio content
   let audioSrc = audioUrl
+  let blobUrlToCleanup = null // Track blob URLs we create so we can revoke them later
   if (audioUrl && audioUrl.startsWith('data:local-audio:')) {
     const content = audioUrl.substring('data:local-audio:'.length)
     if (content === 'stored') {
@@ -216,9 +217,56 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
       onError?.(new Error('Audio file content is missing. The audio file may have been cleared from storage. Please re-upload your audio file in the media settings.'))
       return () => {}
     }
+    
     // The content should be a data URL (data:audio/mpeg;base64,...)
-    // Use it directly as the audio source
-    audioSrc = content
+    // For large files, convert to Blob URL for better performance and compatibility
+    try {
+      if (content.startsWith('data:audio/')) {
+        // It's already a data URL, but for large files, convert to Blob URL
+        const base64Match = content.match(/^data:audio\/[^;]+;base64,(.+)$/)
+        if (base64Match && base64Match[1]) {
+          const base64Data = base64Match[1]
+          console.log('[playAudioSegment] Converting base64 to blob, base64 length:', base64Data.length)
+          
+          // Convert base64 to binary - for large files, do this in chunks to avoid memory issues
+          try {
+            const binaryString = atob(base64Data)
+            console.log('[playAudioSegment] Base64 decoded, binary string length:', binaryString.length)
+            
+            const bytes = new Uint8Array(binaryString.length)
+            for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i)
+            }
+            
+            // Create blob and blob URL
+            const mimeType = content.match(/^data:(audio\/[^;]+)/)?.[1] || 'audio/mpeg'
+            const blob = new Blob([bytes], { type: mimeType })
+            blobUrlToCleanup = URL.createObjectURL(blob)
+            audioSrc = blobUrlToCleanup
+            console.log('[playAudioSegment] Created blob URL for audio, size:', blob.size, 'bytes, mimeType:', mimeType, 'blobUrl:', blobUrlToCleanup.substring(0, 50) + '...')
+          } catch (conversionError) {
+            console.error('[playAudioSegment] Error converting base64 to blob:', conversionError)
+            // Fallback to using data URL directly - might work for smaller files
+            audioSrc = content
+            console.log('[playAudioSegment] Falling back to data URL due to conversion error')
+          }
+        } else {
+          // Fallback to using data URL directly
+          audioSrc = content
+          console.log('[playAudioSegment] Using data URL directly (could not parse base64)')
+        }
+      } else {
+        // Content is just base64, try to create data URL
+        // First, try to detect mime type from the content or default to audio/mpeg
+        audioSrc = `data:audio/mpeg;base64,${content}`
+        console.log('[playAudioSegment] Created data URL from base64 content, length:', audioSrc.length)
+      }
+    } catch (error) {
+      console.error('[playAudioSegment] Error processing audio content:', error)
+      // Fallback to using content directly
+      audioSrc = content.startsWith('data:') ? content : `data:audio/mpeg;base64,${content}`
+      console.log('[playAudioSegment] Using fallback audio source, length:', audioSrc.length)
+    }
   }
   
   // Reuse a global hidden audio element if possible
@@ -276,22 +324,28 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
     onError?.(new Error(errorMessage))
   }
   
+  console.log('[playAudioSegment] Setting audio source, type:', typeof audioSrc, 'starts with:', audioSrc ? audioSrc.substring(0, 50) : 'null')
   audio.src = audioSrc
   audio.volume = 1.0
+  console.log('[playAudioSegment] Audio element configured, volume:', audio.volume, 'src length:', audioSrc ? audioSrc.length : 0)
   
   audio.onloadstart = () => {
-    // Audio started loading
+    console.log('[playAudioSegment] Audio started loading')
   }
   
   audio.oncanplay = () => {
+    console.log('[playAudioSegment] Audio can play, readyState:', audio.readyState, 'duration:', audio.duration, 'currentTime:', audio.currentTime)
     // Check if playback was already ended/cancelled
     if (ended) {
+      console.log('[playAudioSegment] Playback already ended, skipping')
       return
     }
     
     try {
       onStart && onStart()
-      audio.currentTime = Math.max(0, startMs / 1000)
+      const targetTime = Math.max(0, startMs / 1000)
+      audio.currentTime = targetTime
+      console.log('[playAudioSegment] Set currentTime to:', targetTime, 'actual:', audio.currentTime)
       
       // Use a flag to track if play() is in progress
       let playPromise = null
@@ -305,13 +359,22 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
       
       if (playPromise) {
         playPromise.then(() => {
+          console.log('[playAudioSegment] Audio play() promise resolved, playing:', !audio.paused, 'currentTime:', audio.currentTime)
           // Only set up timeout if playback wasn't ended
-          if (ended) return
+          if (ended) {
+            console.log('[playAudioSegment] Playback ended before timeout setup')
+            return
+          }
           
+          console.log('[playAudioSegment] Setting timeout to stop playback after', durationSec, 'seconds')
           // Stop after duration
           setTimeout(() => {
-            if (ended) return
+            if (ended) {
+              console.log('[playAudioSegment] Playback already ended in timeout')
+              return
+            }
             ended = true
+            console.log('[playAudioSegment] Stopping playback after duration')
             try {
               audio.pause()
               onEnd && onEnd()
@@ -323,15 +386,19 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
             }
           }, durationSec * 1000)
         }).catch((e) => {
+          console.error('[playAudioSegment] Audio play() promise rejected:', e)
           // Ignore "interrupted by pause" errors - they're expected if user stops playback
           if (e.message && e.message.includes('interrupted by a call to pause')) {
             // This is expected when stopping playback, don't report as error
+            console.log('[playAudioSegment] Play interrupted by pause (expected)')
             return
           }
           if (!ended) {
             reportError(e)
           }
         })
+      } else {
+        console.log('[playAudioSegment] play() did not return a promise')
       }
     } catch (e) {
       if (!ended) {
@@ -341,22 +408,48 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
   }
   
   audio.onerror = (e) => {
+    console.error('[playAudioSegment] Audio error event:', e)
     const mediaError = audio.error
     if (mediaError) {
+      console.error('[playAudioSegment] Media error code:', mediaError.code, 'message:', mediaError.message)
       reportError(mediaError)
     } else {
+      console.error('[playAudioSegment] Unknown audio playback error')
       reportError('Unknown audio playback error.')
     }
   }
   
   audio.onstalled = () => {
+    console.warn('[playAudioSegment] Audio loading stalled')
     reportError('Audio loading stalled.')
   }
   
   audio.onabort = () => {
+    console.warn('[playAudioSegment] Audio loading was aborted')
     reportError('Audio loading was aborted.')
   }
   
+  audio.onloadeddata = () => {
+    console.log('[playAudioSegment] Audio data loaded, duration:', audio.duration)
+  }
+  
+  audio.onloadedmetadata = () => {
+    console.log('[playAudioSegment] Audio metadata loaded, duration:', audio.duration, 'readyState:', audio.readyState)
+  }
+  
+  audio.onplay = () => {
+    console.log('[playAudioSegment] Audio play event fired, playing:', !audio.paused)
+  }
+  
+  audio.onpause = () => {
+    console.log('[playAudioSegment] Audio pause event fired')
+  }
+  
+  audio.onended = () => {
+    console.log('[playAudioSegment] Audio ended event fired')
+  }
+  
+  console.log('[playAudioSegment] Calling audio.load()')
   audio.load()
   
   // Stop function
@@ -381,7 +474,10 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
             audio.src = ''
           }
           // Clean up blob URL if we created one
-          if (audioSrc && audioSrc.startsWith('blob:')) {
+          if (blobUrlToCleanup) {
+            URL.revokeObjectURL(blobUrlToCleanup)
+            console.log('[playAudioSegment] Revoked blob URL')
+          } else if (audioSrc && audioSrc.startsWith('blob:')) {
             URL.revokeObjectURL(audioSrc)
           }
         } catch {}
