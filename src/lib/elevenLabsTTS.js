@@ -19,14 +19,9 @@ let currentAudio = null
  */
 export function isElevenLabsAvailable() {
   const hasKey = !!ELEVEN_LABS_API_KEY
-  // Debug logging (only in development)
-  if (import.meta.env.DEV) {
-    console.log('ElevenLabs API Key Check:', {
-      hasKey,
-      keyLength: ELEVEN_LABS_API_KEY?.length || 0,
-      keyPrefix: ELEVEN_LABS_API_KEY?.substring(0, 10) || 'none',
-      envVar: import.meta.env.VITE_ELEVEN_LABS_API_KEY ? 'present' : 'missing'
-    })
+  // Only log in development and if there's an issue
+  if (import.meta.env.DEV && !hasKey) {
+    console.log('ElevenLabs API Key Check: Key not found')
   }
   return hasKey
 }
@@ -49,8 +44,14 @@ export async function getElevenLabsVoices() {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))
+      const errorMsg = errorData.detail?.message || ''
+      // If API key doesn't have voices_read permission, fall back to hardcoded voices
+      if (response.status === 401 && errorMsg.includes('voices_read')) {
+        console.warn('ElevenLabs API key missing voices_read permission. Using hardcoded cinematic voices.')
+        return getCinematicVoices()
+      }
       throw new Error(
-        `Failed to fetch voices: ${response.status} ${response.statusText}. ${errorData.detail?.message || ''}`
+        `Failed to fetch voices: ${response.status} ${response.statusText}. ${errorMsg}`
       )
     }
 

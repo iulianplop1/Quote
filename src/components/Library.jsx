@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
-import { Plus, Trash2, Upload, Link as LinkIcon, Loader2, Quote, X, Volume2, VolumeX, Pause, Play, Settings, PlayCircle } from 'lucide-react'
+import { Plus, Trash2, Upload, Link as LinkIcon, Loader2, Quote, X, Volume2, VolumeX, Pause, Play, Settings, PlayCircle, Film } from 'lucide-react'
 import { parseScript } from '../lib/gemini'
 import { fetchScriptFromUrl } from '../lib/scriptFetcher'
 import { getMoviePoster } from '../lib/tmdb'
@@ -24,6 +24,8 @@ import {
   getCinematicVoices,
   isElevenLabsAvailable,
 } from '../lib/textToSpeech'
+import { playOriginalQuoteSegment } from '../lib/originalAudio'
+import { getMovieMediaConfigPersisted, setMovieMediaConfigPersisted } from '../lib/mediaConfig'
 
 export default function Library() {
   const [movies, setMovies] = useState([])
@@ -640,6 +642,48 @@ export default function Library() {
                               ) : (
                                 <Volume2 size={18} className="text-slate-600 dark:text-slate-400" />
                               )}
+                            </button>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  const cfg = await getMovieMediaConfigPersisted(selectedMovie.id)
+                                  let videoUrl = cfg.videoUrl
+                                  let srtUrl = cfg.srtUrl
+                                  if (!videoUrl || !srtUrl) {
+                                    const inputVideo = prompt('Enter video URL for this movie (from your licensed source):', videoUrl || '')
+                                    if (!inputVideo) return
+                                    const inputSrt = prompt('Enter subtitles (SRT) URL for this movie:', srtUrl || '')
+                                    if (!inputSrt) return
+                                    videoUrl = inputVideo.trim()
+                                    srtUrl = inputSrt.trim()
+                                    await setMovieMediaConfigPersisted(selectedMovie.id, { videoUrl, srtUrl })
+                                  }
+                                  const quoteText = `"${quote.quote}"${quote.character ? ` by ${quote.character}` : ''}`
+                                  await playOriginalQuoteSegment(quoteText, videoUrl, srtUrl, {
+                                    onStart: () => {
+                                      setPlayingQuoteId(quote.id)
+                                      setIsPausedState(false)
+                                    },
+                                    onEnd: () => {
+                                      setPlayingQuoteId(null)
+                                      setIsPausedState(false)
+                                    },
+                                    onError: (e) => {
+                                      console.error('Original clip playback error:', e)
+                                      const errorMsg = e?.message || 'Could not play original clip'
+                                      alert(`Error: ${errorMsg}\n\nMake sure you're using:\n- Direct video URLs (ending in .mp4 or .m3u8), not page URLs\n- Direct SRT file URLs that allow CORS\n- Both URLs must be accessible from your browser`)
+                                      setPlayingQuoteId(null)
+                                      setIsPausedState(false)
+                                    }
+                                  })
+                                } catch (e) {
+                                  console.error(e)
+                                }
+                              }}
+                              className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                              title="Play original clip (video audio)"
+                            >
+                              <Film size={18} className="text-slate-600 dark:text-slate-400" />
                             </button>
                             {isPlaying && (
                               <button

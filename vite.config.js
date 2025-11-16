@@ -29,6 +29,15 @@ export default defineConfig(({ mode }) => {
       }
     ],
     base,
+    server: {
+      proxy: {
+        '/api/video': {
+          target: 'https://bold.webghostpiano.workers.dev',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api\/video/, ''),
+        },
+      },
+    },
     build: {
       outDir: 'dist'
     }

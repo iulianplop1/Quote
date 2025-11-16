@@ -20,6 +20,8 @@ import {
   getCinematicVoices,
   isElevenLabsAvailable,
 } from '../lib/textToSpeech'
+import { playOriginalQuoteSegment } from '../lib/originalAudio'
+import { getMovieMediaConfigPersisted, setMovieMediaConfigPersisted } from '../lib/mediaConfig'
 
 export default function Dashboard() {
   const [todayQuote, setTodayQuote] = useState(null)
@@ -570,6 +572,52 @@ export default function Dashboard() {
                   title="TTS Settings"
                 >
                   <Settings size={18} />
+                </button>
+
+                <button
+                  onClick={async () => {
+                    if (!todayQuote?.quotes) return
+                    try {
+                      const movieId = todayQuote.quotes.movies.id
+                      const cfg = await getMovieMediaConfigPersisted(movieId)
+                      let videoUrl = cfg.videoUrl
+                      let srtUrl = cfg.srtUrl
+                      if (!videoUrl || !srtUrl) {
+                        const inputVideo = prompt('Enter video URL for this movie (from your licensed source):', videoUrl || '')
+                        if (!inputVideo) return
+                        const inputSrt = prompt('Enter subtitles (SRT) URL for this movie:', srtUrl || '')
+                        if (!inputSrt) return
+                        videoUrl = inputVideo.trim()
+                        srtUrl = inputSrt.trim()
+                        await setMovieMediaConfigPersisted(movieId, { videoUrl, srtUrl })
+                      }
+                      const quoteText = `"${todayQuote.quotes.quote}"${todayQuote.quotes.character ? ` by ${todayQuote.quotes.character}` : ''}`
+                      await playOriginalQuoteSegment(quoteText, videoUrl, srtUrl, {
+                        onStart: () => {
+                          setIsPlaying(true)
+                          setIsPausedState(false)
+                        },
+                        onEnd: () => {
+                          setIsPlaying(false)
+                          setIsPausedState(false)
+                        },
+                        onError: (e) => {
+                          console.error('Original clip playback error:', e)
+                          const errorMsg = e?.message || 'Could not play original clip'
+                          alert(`Error: ${errorMsg}\n\nMake sure you're using:\n- Direct video URLs (ending in .mp4 or .m3u8), not page URLs\n- Direct SRT file URLs that allow CORS\n- Both URLs must be accessible from your browser`)
+                          setIsPlaying(false)
+                          setIsPausedState(false)
+                        }
+                      })
+                    } catch (e) {
+                      console.error(e)
+                    }
+                  }}
+                  className="btn-secondary flex items-center space-x-2"
+                  title="Play Original Clip"
+                >
+                  <Film size={18} />
+                  <span>Original</span>
                 </button>
               </div>
             </div>
