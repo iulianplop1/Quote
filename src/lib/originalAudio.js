@@ -20,29 +20,64 @@ function getProxiedUrl(url) {
 
 // Parse SRT text into entries: { startMs, endMs, text }
 export function parseSrtToEntries(srtText) {
+  if (!srtText || typeof srtText !== 'string') {
+    throw new Error('SRT content is empty or invalid. Please ensure you uploaded a valid SRT file.')
+  }
+  
+  const trimmed = srtText.trim()
+  if (!trimmed) {
+    throw new Error('SRT file appears to be empty. Please check your subtitle file.')
+  }
+  
   const entries = []
-  const blocks = srtText.replace(/\r/g, '').split('\n\n')
+  const blocks = trimmed.replace(/\r/g, '').split('\n\n')
+  let validBlocks = 0
+  let totalBlocks = blocks.length
+  
   for (const block of blocks) {
     const lines = block.trim().split('\n')
     if (lines.length < 2) continue
+    
     // index (optional) on line 0 if numeric
     const timeLine = lines[0].includes('-->') ? lines[0] : lines[1]
     const textLines = lines[0].includes('-->') ? lines.slice(1) : lines.slice(2)
-    const match = timeLine.match(/(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})/)
+    // Support both comma and period separators for milliseconds (00:00:01,000 or 00:00:01.000)
+    const match = timeLine.match(/(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})/)
     if (!match) continue
-    const startMs = timestampToMs(match[1])
-    const endMs = timestampToMs(match[2])
-    const text = textLines.join(' ').replace(/\s+/g, ' ').trim()
-    if (text) {
-      entries.push({ startMs, endMs, text })
+    
+    try {
+      const startMs = timestampToMs(match[1])
+      const endMs = timestampToMs(match[2])
+      const text = textLines.join(' ').replace(/\s+/g, ' ').trim()
+      if (text) {
+        entries.push({ startMs, endMs, text })
+        validBlocks++
+      }
+    } catch (e) {
+      console.warn('Error parsing SRT block:', e)
+      continue
     }
   }
+  
+  if (entries.length === 0) {
+    // Provide helpful error message
+    if (totalBlocks === 0 || (totalBlocks === 1 && blocks[0].trim() === '')) {
+      throw new Error('SRT file is empty. Please upload a valid SRT subtitle file with timestamp entries.')
+    } else if (validBlocks === 0) {
+      throw new Error(`SRT file format appears invalid. Found ${totalBlocks} blocks but none could be parsed. Please ensure your SRT file follows the standard format:\n\n1\n00:00:01,000 --> 00:00:03,000\nSubtitle text here\n\n2\n00:00:04,000 --> 00:00:06,000\nMore subtitle text`)
+    } else {
+      throw new Error('No valid subtitle entries found in SRT file. Please check the file format.')
+    }
+  }
+  
   return entries
 }
 
 function timestampToMs(ts) {
   const [h, m, rest] = ts.split(':')
-  const [s, ms] = rest.split(',')
+  // Support both comma and period separators
+  const separator = rest.includes(',') ? ',' : '.'
+  const [s, ms] = rest.split(separator)
   return (
     parseInt(h, 10) * 3600000 +
     parseInt(m, 10) * 60000 +
@@ -125,6 +160,31 @@ export function playVideoSegment(videoUrl, startMs, endMs, { onStart, onEnd, onE
   // Use proxy in development to avoid CORS issues
   const proxiedVideoUrl = getProxiedUrl(videoUrl)
   
+  // First, check if the video URL is accessible
+  const checkVideoAccess = async () => {
+    try {
+      const testUrl = proxiedVideoUrl
+      const response = await fetch(testUrl, { method: 'HEAD' })
+      if (!response.ok) {
+        let errorMsg = `Video URL returned ${response.status} ${response.statusText}`
+        if (response.status === 403) {
+          errorMsg += '. The video URL may be protected, expired, or require authentication. Please check if the URL is still valid and accessible.'
+        } else if (response.status === 404) {
+          errorMsg += '. The video URL was not found. Please verify the URL is correct.'
+        } else if (response.status === 401) {
+          errorMsg += '. The video URL requires authentication.'
+        }
+        onError?.(new Error(errorMsg))
+        return false
+      }
+      return true
+    } catch (error) {
+      // If HEAD request fails, try to continue anyway (might be CORS issue, but video element might still work)
+      console.warn('Could not verify video URL accessibility:', error)
+      return true
+    }
+  }
+  
   // Reuse a global hidden video element if possible
   let video = document.getElementById('original-audio-hidden-video')
   if (!video) {
@@ -138,47 +198,121 @@ export function playVideoSegment(videoUrl, startMs, endMs, { onStart, onEnd, onE
     video.setAttribute('webkit-playsinline', 'true')
     document.body.appendChild(video)
   }
-  video.src = proxiedVideoUrl
+  
   video.currentTime = Math.max(0, startMs / 1000)
   const durationSec = Math.max(0.1, (endMs - startMs) / 1000)
   let ended = false
+  let errorReported = false
+  
   const clearTimers = () => {
     video.oncanplay = null
     video.onerror = null
+    video.onloadstart = null
+    video.onstalled = null
+    video.onabort = null
   }
-  video.oncanplay = () => {
-    try {
-      onStart && onStart()
-      video.currentTime = Math.max(0, startMs / 1000)
-      video.muted = false
-      video.play().then(() => {
-        // Stop after duration
-        setTimeout(() => {
-          if (ended) return
-          ended = true
-          try {
-            video.pause()
-            onEnd && onEnd()
-          } catch (e) {
-            onError && onError(e)
-          }
-        }, durationSec * 1000)
-      }).catch((e) => {
-        onError && onError(e)
-      })
-    } catch (e) {
-      onError && onError(e)
+  
+  const reportError = (error) => {
+    if (errorReported) return
+    errorReported = true
+    clearTimers()
+    
+    let errorMessage = 'Video playback error'
+    if (error?.message) {
+      errorMessage = error.message
+    } else if (typeof error === 'string') {
+      errorMessage = error
+    } else if (error?.code) {
+      // MediaError codes
+      switch (error.code) {
+        case 1: // MEDIA_ERR_ABORTED
+          errorMessage = 'Video playback was aborted. The video URL may be invalid or inaccessible.'
+          break
+        case 2: // MEDIA_ERR_NETWORK
+          errorMessage = 'Network error while loading video. Please check your internet connection and verify the video URL is accessible.'
+          break
+        case 3: // MEDIA_ERR_DECODE
+          errorMessage = 'Video decoding error. The video format may not be supported or the file may be corrupted.'
+          break
+        case 4: // MEDIA_ERR_SRC_NOT_SUPPORTED
+          errorMessage = 'Video format not supported. Please use .mp4 or .m3u8 formats.'
+          break
+        default:
+          errorMessage = `Video playback error (code: ${error.code}). The video URL may be invalid, expired, or inaccessible.`
+      }
     }
+    
+    // Check for common issues
+    if (videoUrl.includes('workers.dev') || videoUrl.includes('cloudflare')) {
+      errorMessage += ' Note: This appears to be a Cloudflare Workers URL. It may have expired or require authentication.'
+    }
+    
+    onError?.(new Error(errorMessage))
   }
-  video.onerror = (e) => {
-    onError && onError(e?.error || new Error('Video playback error'))
-  }
-  // Load source
-  video.load()
+  
+  // Check video accessibility first
+  checkVideoAccess().then((isAccessible) => {
+    if (!isAccessible) return
+    
+    video.src = proxiedVideoUrl
+    
+    video.onloadstart = () => {
+      // Video started loading
+    }
+    
+    video.oncanplay = () => {
+      try {
+        onStart && onStart()
+        video.currentTime = Math.max(0, startMs / 1000)
+        video.muted = false
+        video.play().then(() => {
+          // Stop after duration
+          setTimeout(() => {
+            if (ended) return
+            ended = true
+            try {
+              video.pause()
+              onEnd && onEnd()
+            } catch (e) {
+              reportError(e)
+            }
+          }, durationSec * 1000)
+        }).catch((e) => {
+          reportError(e)
+        })
+      } catch (e) {
+        reportError(e)
+      }
+    }
+    
+    video.onerror = (e) => {
+      const mediaError = video.error
+      if (mediaError) {
+        reportError(mediaError)
+      } else {
+        reportError('Unknown video playback error. The video URL may be invalid or inaccessible.')
+      }
+    }
+    
+    video.onstalled = () => {
+      reportError('Video loading stalled. The video URL may be slow or inaccessible.')
+    }
+    
+    video.onabort = () => {
+      reportError('Video loading was aborted. The video URL may be invalid or inaccessible.')
+    }
+    
+    // Load source
+    video.load()
+  })
+  
   // Stop function
   return () => {
     try {
+      ended = true
+      clearTimers()
       video.pause()
+      video.src = ''
     } catch {}
   }
 }
@@ -186,13 +320,26 @@ export function playVideoSegment(videoUrl, startMs, endMs, { onStart, onEnd, onE
 // High-level: given quote text, video URL, and SRT URL, find timestamps and play segment
 export async function playOriginalQuoteSegment(quoteText, videoUrl, srtUrl, { onStart, onEnd, onError } = {}) {
   try {
+    if (!srtUrl) {
+      throw new Error('Subtitle URL or file is not configured. Please set up subtitles in the media settings.')
+    }
+    
     const srt = await fetchSrt(srtUrl)
-    const entries = parseSrtToEntries(srt)
-    if (!entries.length) throw new Error('No subtitles parsed')
+    if (!srt || !srt.trim()) {
+      throw new Error('Subtitle file is empty. Please upload a valid SRT file or provide a valid subtitle URL.')
+    }
+    
+    const entries = parseSrtToEntries(srt) // This will throw a helpful error if parsing fails
+    
+    if (entries.length === 0) {
+      throw new Error('No subtitle entries could be parsed from the SRT file. Please check that your SRT file is in the correct format.')
+    }
+    
     const { index, score } = findBestSubtitleMatch(quoteText, entries)
     if (index < 0 || score < 0.2) {
-      throw new Error('Could not locate quote in subtitles')
+      throw new Error(`Could not locate quote "${quoteText.substring(0, 50)}..." in subtitles. The quote text may not match the subtitle content, or the subtitles may be for a different version of the movie.`)
     }
+    
     // Pad a bit around the line for naturalness
     const startMs = Math.max(0, entries[index].startMs - 300)
     const endMs = entries[index].endMs + 300

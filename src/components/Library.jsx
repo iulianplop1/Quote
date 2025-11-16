@@ -699,6 +699,23 @@ export default function Library() {
                           
                           try {
                             const content = await file.text()
+                            
+                            // Validate SRT content
+                            if (!content || !content.trim()) {
+                              alert('The subtitle file appears to be empty. Please select a valid SRT file.')
+                              return
+                            }
+                            
+                            // Quick validation - check if it looks like an SRT file
+                            const hasTimestamp = /(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})/.test(content)
+                            if (!hasTimestamp) {
+                              const confirm = window.confirm(
+                                'Warning: The file does not appear to contain SRT timestamp format (HH:MM:SS,mmm --> HH:MM:SS,mmm).\n\n' +
+                                'The file may not be a valid SRT subtitle file. Do you want to continue anyway?'
+                              )
+                              if (!confirm) return
+                            }
+                            
                             setMediaConfig({ ...mediaConfig, srtUrl: createLocalSrtUrl(content) })
                             setSrtFileName(file.name)
                             // Store filename for later reference
