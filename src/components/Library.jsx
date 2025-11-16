@@ -691,9 +691,18 @@ export default function Library() {
                           if (!file) return
                           
                           try {
-                            // Read file as base64
+                            // Read file as base64 (chunked to avoid stack overflow)
                             const arrayBuffer = await file.arrayBuffer()
-                            const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+                            const uint8Array = new Uint8Array(arrayBuffer)
+                            const chunkSize = 8192 // Process in 8KB chunks
+                            let binaryString = ''
+                            
+                            for (let i = 0; i < uint8Array.length; i += chunkSize) {
+                              const chunk = uint8Array.subarray(i, i + chunkSize)
+                              binaryString += String.fromCharCode.apply(null, chunk)
+                            }
+                            
+                            const base64 = btoa(binaryString)
                             const dataUrl = `data:${file.type || 'audio/mpeg'};base64,${base64}`
                             setMediaConfig({ ...mediaConfig, audioUrl: createLocalAudioUrl(dataUrl) })
                             setAudioFileName(file.name)
