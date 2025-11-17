@@ -645,9 +645,9 @@ export default function Library() {
                           const file = e.target.files?.[0]
                           if (!file) return
                           
-                          // Check file size (warn if > 10MB, but allow up to 50MB)
+                          // Check file size (warn if > 10MB, but allow up to 150MB)
                           const maxRecommendedSize = 10 * 1024 * 1024 // 10MB
-                          const maxSize = 50 * 1024 * 1024 // 50MB
+                          const maxSize = 150 * 1024 * 1024 // 150MB
                             if (file.size > maxSize) {
                               alert(`File is too large (${(file.size / 1024 / 1024).toFixed(2)}MB). Maximum size is ${(maxSize / 1024 / 1024).toFixed(0)}MB. Please use a smaller file.`)
                               return
