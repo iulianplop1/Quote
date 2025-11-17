@@ -133,7 +133,58 @@ export function findBestSubtitleMatch(quoteText, entries) {
   const target = normalize(quoteText)
   const targetWords = target.split(' ').filter(w => w.length > 0)
   
-  // First, try to find a single entry that matches well
+  // Strategy: Find where the quote starts, then expand to find where it ends
+  // First, find potential starting points by matching the beginning of the quote
+  const quoteStartWords = targetWords.slice(0, Math.min(8, targetWords.length)).join(' ')
+  const quoteEndWords = targetWords.slice(Math.max(0, targetWords.length - 8)).join(' ')
+  
+  let bestStartIdx = -1
+  let bestEndIdx = -1
+  let bestScore = -Infinity
+  
+  // Try to find entries that contain the start of the quote
+  for (let start = 0; start < entries.length; start++) {
+    const startEntryText = normalize(entries[start].text)
+    
+    // Check if this entry contains words from the start of the quote
+    const startWordsMatch = quoteStartWords.split(' ').filter(w => w.length > 2)
+      .some(word => startEntryText.includes(word))
+    
+    if (startWordsMatch || similarity(quoteStartWords, startEntryText) > 0.3) {
+      // Found a potential start, now try to find the end
+      // Expand forward up to 20 entries to find where the quote ends
+      for (let end = start; end < Math.min(start + 20, entries.length); end++) {
+        const combinedText = entries.slice(start, end + 1)
+          .map(e => normalize(e.text))
+          .join(' ')
+        
+        const score = similarity(target, combinedText)
+        
+        // Also check if we've reached the end of the quote
+        const endWordsMatch = quoteEndWords.split(' ').filter(w => w.length > 2)
+          .some(word => normalize(entries[end].text).includes(word))
+        
+        // Prefer spans that include both start and end words
+        const adjustedScore = endWordsMatch ? score * 1.2 : score
+        
+        if (adjustedScore > bestScore) {
+          bestScore = adjustedScore
+          bestStartIdx = start
+          bestEndIdx = end
+        }
+        
+        // If we get a very good match and found the end words, stop
+        if (score > 0.7 && endWordsMatch) break
+      }
+    }
+  }
+  
+  // If we found a good span, return it
+  if (bestStartIdx >= 0 && bestEndIdx >= 0 && bestScore > 0.2) {
+    return { startIndex: bestStartIdx, endIndex: bestEndIdx, score: bestScore }
+  }
+  
+  // Fallback: try to find a single entry that matches well, then expand
   let bestSingleIdx = -1
   let bestSingleScore = -Infinity
   for (let i = 0; i < entries.length; i++) {
@@ -144,38 +195,39 @@ export function findBestSubtitleMatch(quoteText, entries) {
     }
   }
   
-  // If single entry has high score (>0.7), use it
-  if (bestSingleScore > 0.7) {
-    return { startIndex: bestSingleIdx, endIndex: bestSingleIdx, score: bestSingleScore }
-  }
-  
-  // Otherwise, try to find a span of consecutive entries that together match the quote
-  let bestStart = -1
-  let bestEnd = -1
-  let bestSpanScore = -Infinity
-  
-  // Try spans of different lengths (1 to 10 entries)
-  for (let spanLength = 1; spanLength <= Math.min(10, entries.length); spanLength++) {
-    for (let start = 0; start <= entries.length - spanLength; start++) {
-      // Combine text from consecutive entries
-      const combinedText = entries.slice(start, start + spanLength)
+  // If single entry has decent score, use it and try to expand aggressively
+  if (bestSingleScore > 0.2) {
+    let bestEndIdx2 = bestSingleIdx
+    let bestExpandedScore = bestSingleScore
+    
+    // Try expanding forward more aggressively (up to 15 entries)
+    for (let end = bestSingleIdx; end < Math.min(bestSingleIdx + 15, entries.length); end++) {
+      const combinedText = entries.slice(bestSingleIdx, end + 1)
         .map(e => normalize(e.text))
         .join(' ')
       
       const score = similarity(target, combinedText)
-      if (score > bestSpanScore) {
-        bestSpanScore = score
-        bestStart = start
-        bestEnd = start + spanLength - 1
+      if (score > bestExpandedScore) {
+        bestExpandedScore = score
+        bestEndIdx2 = end
       }
     }
-  }
-  
-  // Use span if it's better than single entry, otherwise use single entry
-  if (bestSpanScore > bestSingleScore && bestSpanScore > 0.2) {
-    return { startIndex: bestStart, endIndex: bestEnd, score: bestSpanScore }
-  } else if (bestSingleScore > 0.2) {
-    return { startIndex: bestSingleIdx, endIndex: bestSingleIdx, score: bestSingleScore }
+    
+    // Try expanding backward
+    let bestStartIdx2 = bestSingleIdx
+    for (let start = Math.max(0, bestSingleIdx - 8); start <= bestSingleIdx; start++) {
+      const combinedText = entries.slice(start, bestEndIdx2 + 1)
+        .map(e => normalize(e.text))
+        .join(' ')
+      
+      const score = similarity(target, combinedText)
+      if (score > bestExpandedScore) {
+        bestExpandedScore = score
+        bestStartIdx2 = start
+      }
+    }
+    
+    return { startIndex: bestStartIdx2, endIndex: bestEndIdx2, score: bestExpandedScore }
   }
   
   return { startIndex: -1, endIndex: -1, score: 0 }
