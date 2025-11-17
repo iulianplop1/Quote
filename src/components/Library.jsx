@@ -1088,7 +1088,7 @@ export default function Library() {
                                     return // Don't proceed if user cancels
                                   }
                                   
-                                  const quoteText = `"${quote.quote}"${quote.character ? ` by ${quote.character}` : ''}`
+                                  const quoteText = quote.quote || ''
                                   console.log('Starting playback:', { quoteText: quoteText.substring(0, 50), hasAudio: !!audioUrl, hasSrt: !!srtUrl })
                                   
                                   const stopPlayback = await playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, {
