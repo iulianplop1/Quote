@@ -127,19 +127,58 @@ function timestampToMs(ts) {
   )
 }
 
-// Basic fuzzy match: returns best entry index and a score
+// Find the best matching span of subtitle entries for a quote
+// Returns start index, end index, and score
 export function findBestSubtitleMatch(quoteText, entries) {
   const target = normalize(quoteText)
-  let bestIdx = -1
-  let bestScore = -Infinity
+  const targetWords = target.split(' ').filter(w => w.length > 0)
+  
+  // First, try to find a single entry that matches well
+  let bestSingleIdx = -1
+  let bestSingleScore = -Infinity
   for (let i = 0; i < entries.length; i++) {
     const score = similarity(target, normalize(entries[i].text))
-    if (score > bestScore) {
-      bestScore = score
-      bestIdx = i
+    if (score > bestSingleScore) {
+      bestSingleScore = score
+      bestSingleIdx = i
     }
   }
-  return { index: bestIdx, score: bestScore }
+  
+  // If single entry has high score (>0.7), use it
+  if (bestSingleScore > 0.7) {
+    return { startIndex: bestSingleIdx, endIndex: bestSingleIdx, score: bestSingleScore }
+  }
+  
+  // Otherwise, try to find a span of consecutive entries that together match the quote
+  let bestStart = -1
+  let bestEnd = -1
+  let bestSpanScore = -Infinity
+  
+  // Try spans of different lengths (1 to 10 entries)
+  for (let spanLength = 1; spanLength <= Math.min(10, entries.length); spanLength++) {
+    for (let start = 0; start <= entries.length - spanLength; start++) {
+      // Combine text from consecutive entries
+      const combinedText = entries.slice(start, start + spanLength)
+        .map(e => normalize(e.text))
+        .join(' ')
+      
+      const score = similarity(target, combinedText)
+      if (score > bestSpanScore) {
+        bestSpanScore = score
+        bestStart = start
+        bestEnd = start + spanLength - 1
+      }
+    }
+  }
+  
+  // Use span if it's better than single entry, otherwise use single entry
+  if (bestSpanScore > bestSingleScore && bestSpanScore > 0.2) {
+    return { startIndex: bestStart, endIndex: bestEnd, score: bestSpanScore }
+  } else if (bestSingleScore > 0.2) {
+    return { startIndex: bestSingleIdx, endIndex: bestSingleIdx, score: bestSingleScore }
+  }
+  
+  return { startIndex: -1, endIndex: -1, score: 0 }
 }
 
 function normalize(s) {
@@ -785,15 +824,18 @@ export async function playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, { on
     }
     
     console.log('Searching for quote in subtitles:', quoteText.substring(0, 50))
-    const { index, score } = findBestSubtitleMatch(quoteText, entries)
-    console.log('Best match found:', { index, score, entry: index >= 0 ? entries[index] : null })
-    if (index < 0 || score < 0.2) {
+    const { startIndex, endIndex, score } = findBestSubtitleMatch(quoteText, entries)
+    console.log('Best match found:', { startIndex, endIndex, score, startEntry: startIndex >= 0 ? entries[startIndex] : null, endEntry: endIndex >= 0 ? entries[endIndex] : null })
+    if (startIndex < 0 || endIndex < 0 || score < 0.2) {
       throw new Error(`Could not locate quote "${quoteText.substring(0, 50)}..." in subtitles. The quote text may not match the subtitle content, or the subtitles may be for a different version of the movie.`)
     }
     
-    // Pad a bit around the line for naturalness
-    const startMs = Math.max(0, entries[index].startMs - 300)
-    const endMs = entries[index].endMs + 300
+    // Use the span from startIndex to endIndex
+    // Pad a bit around for naturalness (500ms before start, 500ms after end)
+    const startMs = Math.max(0, entries[startIndex].startMs - 500)
+    const endMs = entries[endIndex].endMs + 500
+    
+    console.log(`Playing from entry ${startIndex} to ${endIndex}, time range: ${startMs}ms to ${endMs}ms (${((endMs - startMs) / 1000).toFixed(2)}s)`)
     
     // Play audio segment from the uploaded audio file
     return playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onError })
