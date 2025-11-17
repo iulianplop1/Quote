@@ -661,36 +661,51 @@ export default function Library() {
                           }
                           
                           try {
-                            // Read file as base64 (chunked to avoid stack overflow)
-                            const arrayBuffer = await file.arrayBuffer()
-                            const uint8Array = new Uint8Array(arrayBuffer)
-                            const chunkSize = 8192 // Process in 8KB chunks
-                            let binaryString = ''
+                            // Store file as Blob directly - more efficient than base64
+                            // Create a marker URL that indicates the blob is stored in IndexedDB
+                            const audioUrl = createLocalAudioUrl('blob-stored')
+                            console.log('Audio file uploaded, size:', file.size, 'bytes, type:', file.type)
                             
-                            for (let i = 0; i < uint8Array.length; i += chunkSize) {
-                              const chunk = uint8Array.subarray(i, i + chunkSize)
-                              binaryString += String.fromCharCode.apply(null, chunk)
-                            }
-                            
-                            const base64 = btoa(binaryString)
-                            const dataUrl = `data:${file.type || 'audio/mpeg'};base64,${base64}`
-                            console.log('Audio file uploaded, base64 length:', base64.length, 'dataUrl length:', dataUrl.length)
-                            
-                            // Validate content is actually there
-                            if (!base64 || base64.length < 100) {
-                              alert('Error: The audio file appears to be empty or corrupted. Please select a valid audio file.')
-                              return
-                            }
-                            
-                            // createLocalAudioUrl expects the full data URL (data:audio/mpeg;base64,...)
-                            // so we pass the dataUrl directly
-                            const audioUrl = createLocalAudioUrl(dataUrl)
-                            console.log('Created audio URL, total length:', audioUrl.length)
-                            setMediaConfig({ ...mediaConfig, audioUrl })
-                            setAudioFileName(file.name)
+                            // Store the blob directly in IndexedDB immediately
                             if (selectedMovie) {
+                              const storageKey = `movie-audio-content-${selectedMovie.id}`
+                              try {
+                                // Store blob directly in IndexedDB
+                                const db = await new Promise((resolve, reject) => {
+                                  const request = indexedDB.open('QuoteAppDB', 1)
+                                  request.onerror = () => reject(request.error)
+                                  request.onsuccess = () => resolve(request.result)
+                                  request.onupgradeneeded = (event) => {
+                                    const db = event.target.result
+                                    if (!db.objectStoreNames.contains('movie-audio-files')) {
+                                      db.createObjectStore('movie-audio-files')
+                                    }
+                                  }
+                                })
+                                
+                                await new Promise((resolve, reject) => {
+                                  const transaction = db.transaction(['movie-audio-files'], 'readwrite')
+                                  const store = transaction.objectStore('movie-audio-files')
+                                  const request = store.put(file, storageKey)
+                                  request.onsuccess = () => resolve()
+                                  request.onerror = () => reject(request.error)
+                                })
+                                
+                                // Mark as stored in IndexedDB
+                                localStorage.setItem(storageKey + '-idb', 'true')
+                                localStorage.setItem(storageKey + '-type', file.type || 'audio/mpeg')
+                                console.log('Audio blob stored in IndexedDB, key:', storageKey)
+                              } catch (storageError) {
+                                console.error('Error storing audio blob:', storageError)
+                                alert('Error storing audio file: ' + storageError.message)
+                                return
+                              }
+                              
                               localStorage.setItem(`movie-audio-filename-${selectedMovie.id}`, file.name)
                             }
+                            
+                            setMediaConfig({ ...mediaConfig, audioUrl })
+                            setAudioFileName(file.name)
                           } catch (error) {
                             console.error('Error reading audio file:', error)
                             if (error.name === 'QuotaExceededError') {

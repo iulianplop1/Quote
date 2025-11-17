@@ -211,93 +211,62 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
   let blobUrlToCleanup = null // Track blob URLs we create so we can revoke them later
   if (audioUrl && audioUrl.startsWith('data:local-audio:')) {
     const content = audioUrl.substring('data:local-audio:'.length)
-    if (content === 'stored') {
+    if (content === 'stored' || content === 'blob-stored') {
       // This shouldn't happen if getMovieMediaConfigLocal worked correctly
       // But if it does, provide a helpful error
       onError?.(new Error('Audio file content is missing. The audio file may have been cleared from storage. Please re-upload your audio file in the media settings.'))
       return () => {}
     }
     
-    // The content should be a data URL (data:audio/mpeg;base64,...)
-    // For large files, convert to Blob URL for better performance and compatibility
     console.log('[playAudioSegment] Processing local audio content, length:', content.length, 'starts with:', content.substring(0, 50))
     
-    try {
-      if (content.startsWith('data:audio/')) {
-        // It's already a data URL, but for large files, convert to Blob URL
-        const base64Match = content.match(/^data:audio\/[^;]+;base64,(.+)$/)
-        if (base64Match && base64Match[1]) {
-          const base64Data = base64Match[1]
-          console.log('[playAudioSegment] Converting base64 to blob, base64 length:', base64Data.length)
-          
-          // For very large files, use fetch which handles data URLs efficiently
-          // This is async, so we'll set up the audio element after conversion
-          fetch(content)
-            .then(response => response.blob())
-            .then(blob => {
-              blobUrlToCleanup = URL.createObjectURL(blob)
-              console.log('[playAudioSegment] Created blob URL via fetch, size:', blob.size, 'bytes, mimeType:', blob.type)
-              
-              // Update the audio source and load
-              const audioEl = document.getElementById('original-audio-hidden-audio')
-              if (audioEl && !checkEnded()) {
-                audioEl.src = blobUrlToCleanup
-                audioEl.load()
-                console.log('[playAudioSegment] Updated audio source to blob URL')
-              }
-            })
-            .catch(fetchError => {
-              console.warn('[playAudioSegment] Fetch approach failed, trying direct conversion:', fetchError)
-              // Fallback: try direct conversion for smaller files
-              try {
-                const binaryString = atob(base64Data)
-                console.log('[playAudioSegment] Base64 decoded, binary string length:', binaryString.length)
-                
-                const bytes = new Uint8Array(binaryString.length)
-                for (let i = 0; i < binaryString.length; i++) {
-                  bytes[i] = binaryString.charCodeAt(i)
-                }
-                
-                // Create blob and blob URL
-                const mimeType = content.match(/^data:(audio\/[^;]+)/)?.[1] || 'audio/mpeg'
-                const blob = new Blob([bytes], { type: mimeType })
-                blobUrlToCleanup = URL.createObjectURL(blob)
-                
-                // Update the audio source and load
-                const audioEl = document.getElementById('original-audio-hidden-audio')
-                if (audioEl && !checkEnded()) {
-                  audioEl.src = blobUrlToCleanup
-                  audioEl.volume = 1.0
-                  audioEl.muted = false
-                  audioEl.load()
-                  console.log('[playAudioSegment] Created blob URL via direct conversion, size:', blob.size, 'bytes, mimeType:', mimeType, 'volume:', audioEl.volume, 'muted:', audioEl.muted)
-                }
-              } catch (conversionError) {
-                console.error('[playAudioSegment] Error converting base64 to blob:', conversionError)
-                // Fallback to using data URL directly
-                audioSrc = content
-                console.log('[playAudioSegment] Falling back to data URL due to conversion error')
-              }
-            })
-          
-          // For now, use the data URL directly - it will be updated to blob URL when ready
-          audioSrc = content
-        } else {
-          // Fallback to using data URL directly
-          audioSrc = content
-          console.log('[playAudioSegment] Using data URL directly (could not parse base64)')
-        }
+    // Check if it's a blob URL format (data:audio/mpeg;blob-url:blob:...)
+    const blobUrlMatch = content.match(/^data:audio\/[^;]+;blob-url:(.+)$/)
+    if (blobUrlMatch && blobUrlMatch[1]) {
+      // It's already a blob URL, use it directly
+      audioSrc = blobUrlMatch[1]
+      console.log('[playAudioSegment] Using existing blob URL')
+    } else if (content.startsWith('data:audio/')) {
+      // Legacy: base64 data URL - convert to blob URL
+      const base64Match = content.match(/^data:audio\/[^;]+;base64,(.+)$/)
+      if (base64Match && base64Match[1]) {
+        const base64Data = base64Match[1]
+        console.log('[playAudioSegment] Converting base64 to blob, base64 length:', base64Data.length)
+        
+        // Use fetch which handles data URLs efficiently
+        fetch(content)
+          .then(response => response.blob())
+          .then(blob => {
+            blobUrlToCleanup = URL.createObjectURL(blob)
+            console.log('[playAudioSegment] Created blob URL via fetch, size:', blob.size, 'bytes, mimeType:', blob.type)
+            
+            // Update the audio source and load
+            const audioEl = document.getElementById('original-audio-hidden-audio')
+            if (audioEl && !checkEnded()) {
+              audioEl.src = blobUrlToCleanup
+              audioEl.volume = 1.0
+              audioEl.muted = false
+              audioEl.load()
+              console.log('[playAudioSegment] Updated audio source to blob URL')
+            }
+          })
+          .catch(fetchError => {
+            console.error('[playAudioSegment] Error converting data URL to blob:', fetchError)
+            // Fallback to using data URL directly
+            audioSrc = content
+            console.log('[playAudioSegment] Falling back to data URL due to conversion error')
+          })
+        
+        // For now, use the data URL directly - it will be updated to blob URL when ready
+        audioSrc = content
       } else {
-        // Content is just base64, try to create data URL
-        // First, try to detect mime type from the content or default to audio/mpeg
-        audioSrc = `data:audio/mpeg;base64,${content}`
-        console.log('[playAudioSegment] Created data URL from base64 content, length:', audioSrc.length)
+        audioSrc = content
+        console.log('[playAudioSegment] Using data URL directly (could not parse base64)')
       }
-    } catch (error) {
-      console.error('[playAudioSegment] Error processing audio content:', error)
-      // Fallback to using content directly
-      audioSrc = content.startsWith('data:') ? content : `data:audio/mpeg;base64,${content}`
-      console.log('[playAudioSegment] Using fallback audio source, length:', audioSrc.length)
+    } else {
+      // Content is just base64, try to create data URL
+      audioSrc = `data:audio/mpeg;base64,${content}`
+      console.log('[playAudioSegment] Created data URL from base64 content, length:', audioSrc.length)
     }
   }
   
