@@ -171,51 +171,10 @@ export function findBestSubtitleMatch(quoteText, entries) {
   }
   
   // Step 2: If we found a start, expand forward to find the end
-  let endIdx = startIdx
   if (startIdx >= 0) {
-    // Look forward from the start entry (up to 30 entries ahead)
-    for (let i = startIdx; i < Math.min(startIdx + 30, entries.length); i++) {
-      const entryText = normalize(entries[i].text)
-      
-      // Check if this entry contains the last few words in sequence
-      const lastThreeWords = lastWords.slice(Math.max(0, lastWords.length - 3))
-      const lastFourWords = lastWords.slice(Math.max(0, lastWords.length - 4))
-      
-      const hasLastSequence = containsWordSequence(entryText, lastThreeWords) || containsWordSequence(entryText, lastFourWords)
-      
-      // Also check individual word matches
-      const matchingLastWords = lastWords.filter(word => 
-        word.length > 2 && containsWholeWord(entryText, word)
-      )
-      
-      // If we find the end sequence or at least 3 words from end, mark as end
-      if (hasLastSequence || matchingLastWords.length >= 3) {
-        endIdx = i
-        console.log(`[findBestSubtitleMatch] Found potential end at entry ${i}: "${entries[i].text}"`)
-        // Don't break - continue to find the last matching entry
-      }
-    }
-    
-    // If we found both start and end, use them (even if score is low)
-    if (endIdx > startIdx) {
-      const combinedText = entries.slice(startIdx, endIdx + 1)
-        .map(e => normalize(e.text))
-        .join(' ')
-      const combinedScore = similarity(target, combinedText)
-      
-      console.log(`[findBestSubtitleMatch] Found span from entry ${startIdx} to ${endIdx}, score: ${combinedScore.toFixed(3)}`)
-      // Accept if we found both start and end, even with lower score
-      return { startIndex: startIdx, endIndex: endIdx, score: Math.max(combinedScore, 0.15) }
-    } else if (startIdx >= 0) {
-      // Found start but no clear end - expand forward more aggressively
-      endIdx = Math.min(startIdx + 10, entries.length - 1)
-      const combinedText = entries.slice(startIdx, endIdx + 1)
-        .map(e => normalize(e.text))
-        .join(' ')
-      const combinedScore = similarity(target, combinedText)
-      console.log(`[findBestSubtitleMatch] Found start only, expanded to entry ${endIdx}, score: ${combinedScore.toFixed(3)}`)
-      // Accept if we found a start, even with lower score
-      return { startIndex: startIdx, endIndex: endIdx, score: Math.max(combinedScore, 0.15) }
+    const spanResult = findBestSpanFromStart(entries, startIdx, target, lastWords)
+    if (spanResult) {
+      return spanResult
     }
   }
   
@@ -308,6 +267,61 @@ function containsWordSequence(text, words = []) {
   if (!escapedWords) return false
   const pattern = new RegExp(`\\b${escapedWords}\\b`, 'i')
   return pattern.test(text)
+}
+
+function findBestSpanFromStart(entries, startIdx, target, lastWords) {
+  const maxLookahead = Math.min(entries.length, startIdx + 40)
+  let bestEndIdx = startIdx
+  let bestScore = 0
+  let bestLengthDiff = Infinity
+  const normalizedTarget = target
+  const accumulated = []
+  
+  for (let i = startIdx; i < maxLookahead; i++) {
+    const entryText = normalize(entries[i].text)
+    accumulated.push(entryText)
+    const combinedText = accumulated.join(' ')
+    const combinedScore = similarity(normalizedTarget, combinedText)
+    const lengthDiff = Math.abs(combinedText.length - normalizedTarget.length)
+    
+    // If combined text already contains the whole quote, stop here
+    if (combinedText.includes(normalizedTarget)) {
+      console.log(`[findBestSubtitleMatch] Combined text contains target at entry ${i}, score forced to 1.000`)
+      return { startIndex: startIdx, endIndex: i, score: 1 }
+    }
+    
+    // Prefer matches that contain the last few words
+    const lastThreeWords = lastWords.slice(Math.max(0, lastWords.length - 3))
+    const lastFourWords = lastWords.slice(Math.max(0, lastWords.length - 4))
+    const hasLastSequence = containsWordSequence(entryText, lastThreeWords) || containsWordSequence(entryText, lastFourWords)
+    
+    // Track best score, with slight preference toward shorter spans when scores are similar
+    const isBetterScore = combinedScore > bestScore + 0.02
+    const isSimilarScoreShorterSpan = Math.abs(combinedScore - bestScore) <= 0.02 && lengthDiff < bestLengthDiff
+    
+    if (isBetterScore || isSimilarScoreShorterSpan || hasLastSequence) {
+      bestEndIdx = i
+      bestScore = Math.max(bestScore, combinedScore, hasLastSequence ? Math.max(combinedScore, 0.25) : combinedScore)
+      bestLengthDiff = lengthDiff
+      if (hasLastSequence) {
+        console.log(`[findBestSubtitleMatch] Last phrase sequence hit at entry ${i}, tentative end set with score ${bestScore.toFixed(3)}`)
+      }
+    }
+    
+    // Once we pass 5 entries beyond the best end, break to avoid overly long spans
+    if (i - bestEndIdx > 5 && bestScore > 0.1) {
+      break
+    }
+  }
+  
+  if (bestEndIdx > startIdx) {
+    const combinedText = entries.slice(startIdx, bestEndIdx + 1).map(e => normalize(e.text)).join(' ')
+    const combinedScore = similarity(normalizedTarget, combinedText)
+    console.log(`[findBestSubtitleMatch] Selected span ${startIdx}-${bestEndIdx} with score ${combinedScore.toFixed(3)}`)
+    return { startIndex: startIdx, endIndex: bestEndIdx, score: Math.max(combinedScore, 0.15) }
+  }
+  
+  return null
 }
 
 // Fetch SRT text - supports both URLs and local file content

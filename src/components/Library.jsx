@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { Plus, Trash2, Upload, Link as LinkIcon, Loader2, Quote, X, Volume2, VolumeX, Pause, Play, Settings, PlayCircle, Film } from 'lucide-react'
 import { parseScript } from '../lib/gemini'
@@ -57,6 +57,7 @@ export default function Library() {
   const [mediaConfig, setMediaConfig] = useState({ videoUrl: '', audioUrl: '', srtUrl: '', subtitleOffset: 0 })
   const [srtFileName, setSrtFileName] = useState('')
   const [audioFileName, setAudioFileName] = useState('')
+  const originalAudioStopRef = useRef(null)
 
   useEffect(() => {
     loadMovies()
@@ -360,6 +361,18 @@ export default function Library() {
     }
   }
 
+  const stopOriginalAudio = () => {
+    if (originalAudioStopRef.current) {
+      try {
+        originalAudioStopRef.current()
+      } catch (error) {
+        console.warn('Error stopping original audio playback:', error)
+      } finally {
+        originalAudioStopRef.current = null
+      }
+    }
+  }
+
   const handlePlayQuote = async (quote) => {
     const quoteText = `"${quote.quote}"`
     const characterText = quote.character ? ` by ${quote.character}` : ''
@@ -379,6 +392,7 @@ export default function Library() {
 
     // Stop any other quote and play this one
     stopSpeaking()
+    stopOriginalAudio()
     setPlayingQuoteId(quote.id)
     setIsPausedState(false)
 
@@ -406,6 +420,7 @@ export default function Library() {
 
   const handleStopQuote = () => {
     stopSpeaking()
+    stopOriginalAudio()
     setPlayingQuoteId(null)
     setIsPausedState(false)
   }
@@ -1047,6 +1062,8 @@ export default function Library() {
                             <button
                               onClick={async () => {
                                 try {
+                                  stopSpeaking()
+                                  stopOriginalAudio()
                                   console.log('Film button clicked, loading media config...')
                                   // Reload media config to ensure we have the latest
                                   const cfg = await getMovieMediaConfigPersisted(selectedMovie.id)
@@ -1074,7 +1091,7 @@ export default function Library() {
                                   const quoteText = `"${quote.quote}"${quote.character ? ` by ${quote.character}` : ''}`
                                   console.log('Starting playback:', { quoteText: quoteText.substring(0, 50), hasAudio: !!audioUrl, hasSrt: !!srtUrl })
                                   
-                                  await playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, {
+                                  const stopPlayback = await playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, {
                                     subtitleOffset: mediaConfig.subtitleOffset || 0,
                                     onStart: () => {
                                       console.log('Playback started')
@@ -1083,6 +1100,7 @@ export default function Library() {
                                     },
                                     onEnd: () => {
                                       console.log('Playback ended')
+                                      originalAudioStopRef.current = null
                                       setPlayingQuoteId(null)
                                       setIsPausedState(false)
                                     },
@@ -1099,10 +1117,14 @@ export default function Library() {
                                       } else {
                                         alert(`Error: ${errorMsg}\n\nPlease ensure:\n- You have uploaded both an audio file and a subtitle file\n- The subtitle file is a valid SRT format\n- The quote text matches the subtitle content`)
                                       }
+                                      originalAudioStopRef.current = null
                                       setPlayingQuoteId(null)
                                       setIsPausedState(false)
                                     }
                                   })
+                                  if (typeof stopPlayback === 'function') {
+                                    originalAudioStopRef.current = stopPlayback
+                                  }
                                 } catch (e) {
                                   console.error('Error in Film button handler:', e)
                                   alert(`Error: ${e.message || 'Unknown error occurred. Please check the console for details.'}`)
