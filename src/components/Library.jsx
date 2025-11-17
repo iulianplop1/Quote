@@ -27,6 +27,10 @@ import {
 import { playOriginalQuoteSegment } from '../lib/originalAudio'
 import { getMovieMediaConfigPersisted, setMovieMediaConfigPersisted, isLocalSrtContent, createLocalSrtUrl, getLocalSrtContent, isLocalAudioContent, createLocalAudioUrl, getLocalAudioContent } from '../lib/mediaConfig'
 
+const SUBTITLE_OFFSET_MIN = -600000 // -10 minutes in milliseconds
+const SUBTITLE_OFFSET_MAX = 600000 // +10 minutes in milliseconds
+const SUBTITLE_OFFSET_STEP = 100 // 0.1 second increments
+
 export default function Library() {
   const [movies, setMovies] = useState([])
   const [loading, setLoading] = useState(true)
@@ -741,9 +745,9 @@ export default function Library() {
                   <div className="flex items-center space-x-4">
                     <input
                       type="range"
-                      min="-5000"
-                      max="5000"
-                      step="100"
+                      min={SUBTITLE_OFFSET_MIN}
+                      max={SUBTITLE_OFFSET_MAX}
+                      step={SUBTITLE_OFFSET_STEP}
                       value={mediaConfig.subtitleOffset || 0}
                       onChange={(e) => setMediaConfig({ ...mediaConfig, subtitleOffset: parseInt(e.target.value) || 0 })}
                       className="flex-1"
@@ -756,9 +760,42 @@ export default function Library() {
                     </div>
                   </div>
                   <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 mt-1">
-                    <span>-5.0s</span>
+                    <span>-10m</span>
                     <span>0.0s</span>
-                    <span>+5.0s</span>
+                    <span>+10m</span>
+                  </div>
+                  <div className="mt-3">
+                    <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                      Custom Offset (seconds)
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={SUBTITLE_OFFSET_MIN / 1000}
+                        max={SUBTITLE_OFFSET_MAX / 1000}
+                        step="0.01"
+                        value={(mediaConfig.subtitleOffset || 0) / 1000}
+                        onChange={(e) => {
+                          const rawSeconds = parseFloat(e.target.value)
+                          if (Number.isNaN(rawSeconds)) {
+                            setMediaConfig({ ...mediaConfig, subtitleOffset: 0 })
+                            return
+                          }
+                          const clampedSeconds = Math.min(
+                            SUBTITLE_OFFSET_MAX / 1000,
+                            Math.max(SUBTITLE_OFFSET_MIN / 1000, rawSeconds)
+                          )
+                          setMediaConfig({
+                            ...mediaConfig,
+                            subtitleOffset: Math.round(clampedSeconds * 1000)
+                          })
+                        }}
+                        className="input-field"
+                      />
+                      <span className="text-xs text-slate-500 dark:text-slate-400">
+                        Up to ±10 minutes with 10ms precision
+                      </span>
+                    </div>
                   </div>
                   <div className="mt-2 flex space-x-2">
                     <button
