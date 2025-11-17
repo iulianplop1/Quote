@@ -1,6 +1,5 @@
-// Persist per-movie media URLs (video and SRT) in Supabase if possible, with localStorage fallback.
-// Supports both URLs and local file content for subtitles.
-import { supabase } from './supabase'
+// Persist per-movie media URLs (video, audio, and SRT) using IndexedDB and localStorage only.
+// Supports both URLs and local file content. Audio files stored as Blobs in IndexedDB for efficiency.
 
 const LS_PREFIX = 'movie-media-'
 const LS_SRT_PREFIX = 'movie-srt-content-'
@@ -105,81 +104,9 @@ export function getLocalAudioContent(audioUrl) {
 }
 
 export async function getMovieMediaConfigPersisted(movieId) {
-  try {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return await getMovieMediaConfigLocal(movieId)
-    // Try reading from movie_media table if it exists
-    const { data, error } = await supabase
-      .from('movie_media')
-      .select('video_url, audio_url, srt_url')
-      .eq('user_id', user.id)
-      .eq('movie_id', movieId)
-      .maybeSingle()
-    if (error) {
-      // Table might not exist (404) or other error; silently fall back to local
-      // PGRST116 = not found, 400 = bad request (might be schema/permission issue)
-      // PGRST301 = bad request (column doesn't exist or wrong format)
-      // Suppress these expected errors completely
-      if (error.code !== 'PGRST116' && error.code !== 'PGRST301' && error.code !== '23505') {
-        // Only log unexpected errors
-        console.debug('movie_media table not accessible, using localStorage:', error.message, error.code)
-      }
-      return await getMovieMediaConfigLocal(movieId)
-    }
-    if (data) {
-      const cfg = { videoUrl: data.video_url || '', audioUrl: data.audio_url || '', srtUrl: data.srt_url || '' }
-      // If srtUrl is a marker for local storage, load it from localStorage
-      if (cfg.srtUrl === LOCAL_SRT_PREFIX + 'stored') {
-        const localContent = localStorage.getItem(LS_SRT_PREFIX + movieId)
-        if (localContent) {
-          cfg.srtUrl = createLocalSrtUrl(localContent)
-        } else {
-          cfg.srtUrl = ''
-        }
-      } else if (isLocalSrtContent(cfg.srtUrl) && cfg.srtUrl.endsWith('stored')) {
-        // Handle case where it might be stored as data:local-srt:stored
-        const localContent = localStorage.getItem(LS_SRT_PREFIX + movieId)
-        if (localContent) {
-          cfg.srtUrl = createLocalSrtUrl(localContent)
-        } else {
-          cfg.srtUrl = ''
-        }
-      }
-      
-      // If audioUrl is a marker for local storage, load it from localStorage/IndexedDB
-      if (cfg.audioUrl === LOCAL_AUDIO_PREFIX + 'stored' || 
-          (isLocalAudioContent(cfg.audioUrl) && getLocalAudioContent(cfg.audioUrl) === 'stored')) {
-        const storageKey = LS_AUDIO_PREFIX + movieId
-        const useIndexedDB = localStorage.getItem(storageKey + '-idb') === 'true'
-        
-        let localAudioContent = null
-        if (useIndexedDB) {
-          localAudioContent = await getAudioFromIndexedDB(storageKey)
-        } else {
-          localAudioContent = localStorage.getItem(storageKey)
-        }
-        
-        if (localAudioContent) {
-          cfg.audioUrl = createLocalAudioUrl(localAudioContent)
-        } else {
-          console.warn(`Local audio content not found for movie ${movieId} from Supabase`)
-          cfg.audioUrl = ''
-        }
-      }
-      
-      // Don't call setMovieMediaConfigLocal here - it would overwrite with markers
-      // The cfg already has the full content loaded, so just update the main config entry
-      localStorage.setItem(LS_PREFIX + movieId, JSON.stringify({ 
-        videoUrl: cfg.videoUrl || '', 
-        audioUrl: cfg.audioUrl || '',
-        srtUrl: cfg.srtUrl || '' 
-      }))
-      return cfg
-    }
-    return await getMovieMediaConfigLocal(movieId)
-  } catch {
-    return await getMovieMediaConfigLocal(movieId)
-  }
+  // Simplified: Just use local storage (IndexedDB + localStorage)
+  // No Supabase calls - everything stored locally
+  return await getMovieMediaConfigLocal(movieId)
 }
 
 export async function setMovieMediaConfigPersisted(movieId, { videoUrl, audioUrl, srtUrl }) {
@@ -264,64 +191,8 @@ export async function setMovieMediaConfigPersisted(movieId, { videoUrl, audioUrl
   
   await setMovieMediaConfigLocal(movieId, { videoUrl, audioUrl: audioUrlToStore, srtUrl: srtUrlToStore })
   
-  try {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return false
-    // Only store URLs in Supabase, not file content
-    const srtUrlForSupabase = isLocalSrtContent(srtUrl) ? LOCAL_SRT_PREFIX + 'stored' : (srtUrl || '')
-    const audioUrlForSupabase = isLocalAudioContent(audioUrl) ? LOCAL_AUDIO_PREFIX + 'stored' : (audioUrl || '')
-    // Upsert into movie_media if exists
-    // Build the data object without updated_at first, then add it if needed
-    const upsertData = {
-      user_id: user.id,
-      movie_id: movieId,
-      video_url: videoUrl || '',
-      audio_url: audioUrlForSupabase || '',
-      srt_url: srtUrlForSupabase || '',
-    }
-    
-    // Try with updated_at first, fall back without it if it fails
-    const { error } = await supabase
-      .from('movie_media')
-      .upsert({
-        ...upsertData,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'user_id,movie_id' })
-    
-    // If no error, success!
-    if (!error) {
-      return true
-    }
-    
-    // If error is due to updated_at column, try without it
-    if (error.code === 'PGRST301' || error.message?.includes('column') || error.message?.includes('updated_at')) {
-      const { error: error2 } = await supabase
-        .from('movie_media')
-        .upsert(upsertData, { onConflict: 'user_id,movie_id' })
-      
-      if (error2) {
-        // Use the second error if it exists
-        if (error2.code !== 'PGRST116' && error2.code !== 'PGRST301') {
-          console.debug('movie_media table not accessible, using localStorage only:', error2.message, error2.code)
-        }
-        return false
-      }
-      return true
-    }
-    
-    // Other errors - table may not exist (404) or other error; silently ignore
-    // PGRST116 = not found, 400 = bad request (might be schema/permission issue)
-    // PGRST301 = bad request (column doesn't exist or wrong format)
-    // 23505 = unique constraint violation (expected in some cases)
-    // Suppress these expected errors completely
-    if (error.code !== 'PGRST116' && error.code !== 'PGRST301' && error.code !== '23505') {
-      // Only log unexpected errors
-      console.debug('movie_media table not accessible, using localStorage only:', error.message, error.code)
-    }
-    return false
-  } catch {
-    return false
-  }
+  // Always return true - local storage always succeeds
+  return true
 }
 
 export async function getMovieMediaConfigLocal(movieId) {

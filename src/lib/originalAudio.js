@@ -339,20 +339,29 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
     console.log('[playAudioSegment] Audio started loading')
   }
   
+  // Track if we've already started playback to prevent multiple attempts
+  let playbackStarted = false
+  
   audio.oncanplay = () => {
     console.log('[playAudioSegment] Audio can play, readyState:', audio.readyState, 'duration:', audio.duration, 'currentTime:', audio.currentTime)
-    // Check if playback was already ended/cancelled
-    if (checkEnded()) {
-      console.log('[playAudioSegment] Playback already ended, skipping')
+    
+    // Prevent multiple play attempts
+    if (playbackStarted || checkEnded()) {
+      console.log('[playAudioSegment] Playback already started or ended, skipping')
       return
     }
     
+    playbackStarted = true
+    
     try {
-      onStart && onStart()
       const targetTime = Math.max(0, startMs / 1000)
       audio.currentTime = targetTime
-      audio.muted = false // Ensure audio is unmuted before playing
+      audio.muted = false
+      audio.volume = 1.0
       console.log('[playAudioSegment] Set currentTime to:', targetTime, 'actual:', audio.currentTime, 'muted:', audio.muted, 'volume:', audio.volume)
+      
+      // Call onStart before playing
+      onStart && onStart()
       
       // Use a flag to track if play() is in progress
       let playPromise = null
@@ -360,6 +369,7 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
         playPromise = audio.play()
       } catch (e) {
         // If play() throws synchronously, handle it
+        playbackStarted = false
         reportError(e)
         return
       }
@@ -394,6 +404,7 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
           }, durationSec * 1000)
         }).catch((e) => {
           console.error('[playAudioSegment] Audio play() promise rejected:', e)
+          playbackStarted = false
           // Ignore "interrupted by pause" errors - they're expected if user stops playback
           if (e.message && e.message.includes('interrupted by a call to pause')) {
             // This is expected when stopping playback, don't report as error
@@ -406,8 +417,10 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
         })
       } else {
         console.log('[playAudioSegment] play() did not return a promise')
+        playbackStarted = false
       }
     } catch (e) {
+      playbackStarted = false
       if (!checkEnded()) {
         reportError(e)
       }
