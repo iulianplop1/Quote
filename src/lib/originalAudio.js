@@ -135,26 +135,35 @@ export function findBestSubtitleMatch(quoteText, entries) {
   const target = normalize(quoteText)
   const targetWords = target.split(' ').filter(w => w.length > 0)
   
-  // Get the first few words and last few words of the quote for matching
-  const firstWords = targetWords.slice(0, Math.min(5, targetWords.length))
-  const lastWords = targetWords.slice(Math.max(0, targetWords.length - 5))
+  // Get more words from start and end for better matching
+  const firstWords = targetWords.slice(0, Math.min(6, targetWords.length))
+  const lastWords = targetWords.slice(Math.max(0, targetWords.length - 6))
   const firstPhrase = firstWords.join(' ')
   const lastPhrase = lastWords.join(' ')
   
   console.log('[findBestSubtitleMatch] Looking for quote start:', firstPhrase, 'and end:', lastPhrase)
   
   // Step 1: Find the first entry that contains words from the beginning of the quote
+  // Use a more specific match - look for the actual first words in sequence
   let startIdx = -1
   for (let i = 0; i < entries.length; i++) {
     const entryText = normalize(entries[i].text)
     
-    // Check if this entry contains any of the first words (at least 2 words must match)
+    // Check if this entry contains the first 3+ words in sequence
+    // This is more specific than just checking individual words
+    const firstThreeWords = firstWords.slice(0, Math.min(3, firstWords.length)).join(' ')
+    const firstFourWords = firstWords.slice(0, Math.min(4, firstWords.length)).join(' ')
+    
+    // Check if entry contains the first few words in sequence
+    const hasFirstSequence = entryText.includes(firstThreeWords) || entryText.includes(firstFourWords)
+    
+    // Also check individual word matches (at least 3 words from start)
     const matchingFirstWords = firstWords.filter(word => 
       word.length > 2 && entryText.includes(word)
     )
     
-    // If at least 2 words from the start match, or the entry text is similar to first phrase
-    if (matchingFirstWords.length >= 2 || similarity(firstPhrase, entryText) > 0.3) {
+    // More strict: need sequence match OR at least 3 word matches
+    if (hasFirstSequence || matchingFirstWords.length >= 3) {
       startIdx = i
       console.log(`[findBestSubtitleMatch] Found potential start at entry ${i}: "${entries[i].text}"`)
       break
@@ -164,24 +173,30 @@ export function findBestSubtitleMatch(quoteText, entries) {
   // Step 2: If we found a start, expand forward to find the end
   let endIdx = startIdx
   if (startIdx >= 0) {
-    // Look forward from the start entry (up to 25 entries ahead)
-    for (let i = startIdx; i < Math.min(startIdx + 25, entries.length); i++) {
+    // Look forward from the start entry (up to 30 entries ahead)
+    for (let i = startIdx; i < Math.min(startIdx + 30, entries.length); i++) {
       const entryText = normalize(entries[i].text)
       
-      // Check if this entry contains words from the end of the quote
+      // Check if this entry contains the last few words in sequence
+      const lastThreeWords = lastWords.slice(Math.max(0, lastWords.length - 3)).join(' ')
+      const lastFourWords = lastWords.slice(Math.max(0, lastWords.length - 4)).join(' ')
+      
+      const hasLastSequence = entryText.includes(lastThreeWords) || entryText.includes(lastFourWords)
+      
+      // Also check individual word matches
       const matchingLastWords = lastWords.filter(word => 
         word.length > 2 && entryText.includes(word)
       )
       
-      // If at least 2 words from the end match, or entry is similar to last phrase
-      if (matchingLastWords.length >= 2 || similarity(lastPhrase, entryText) > 0.3) {
+      // If we find the end sequence or at least 3 words from end, mark as end
+      if (hasLastSequence || matchingLastWords.length >= 3) {
         endIdx = i
         console.log(`[findBestSubtitleMatch] Found potential end at entry ${i}: "${entries[i].text}"`)
         // Don't break - continue to find the last matching entry
       }
     }
     
-    // If we found both start and end, calculate the combined score
+    // If we found both start and end, use them (even if score is low)
     if (endIdx > startIdx) {
       const combinedText = entries.slice(startIdx, endIdx + 1)
         .map(e => normalize(e.text))
@@ -189,16 +204,18 @@ export function findBestSubtitleMatch(quoteText, entries) {
       const combinedScore = similarity(target, combinedText)
       
       console.log(`[findBestSubtitleMatch] Found span from entry ${startIdx} to ${endIdx}, score: ${combinedScore.toFixed(3)}`)
-      return { startIndex: startIdx, endIndex: endIdx, score: combinedScore }
+      // Accept if we found both start and end, even with lower score
+      return { startIndex: startIdx, endIndex: endIdx, score: Math.max(combinedScore, 0.15) }
     } else if (startIdx >= 0) {
-      // Found start but no clear end - use the start entry and expand a bit forward
-      endIdx = Math.min(startIdx + 5, entries.length - 1)
+      // Found start but no clear end - expand forward more aggressively
+      endIdx = Math.min(startIdx + 10, entries.length - 1)
       const combinedText = entries.slice(startIdx, endIdx + 1)
         .map(e => normalize(e.text))
         .join(' ')
       const combinedScore = similarity(target, combinedText)
       console.log(`[findBestSubtitleMatch] Found start only, expanded to entry ${endIdx}, score: ${combinedScore.toFixed(3)}`)
-      return { startIndex: startIdx, endIndex: endIdx, score: combinedScore }
+      // Accept if we found a start, even with lower score
+      return { startIndex: startIdx, endIndex: endIdx, score: Math.max(combinedScore, 0.15) }
     }
   }
   
@@ -896,7 +913,8 @@ export async function playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, { on
     console.log('Searching for quote in subtitles:', quoteText.substring(0, 50))
     const { startIndex, endIndex, score } = findBestSubtitleMatch(quoteText, entries)
     console.log('Best match found:', { startIndex, endIndex, score, startEntry: startIndex >= 0 ? entries[startIndex] : null, endEntry: endIndex >= 0 ? entries[endIndex] : null })
-    if (startIndex < 0 || endIndex < 0 || score < 0.2) {
+    // Lower threshold to 0.1 since we're using more lenient matching
+    if (startIndex < 0 || endIndex < 0 || score < 0.1) {
       throw new Error(`Could not locate quote "${quoteText.substring(0, 50)}..." in subtitles. The quote text may not match the subtitle content, or the subtitles may be for a different version of the movie.`)
     }
     
