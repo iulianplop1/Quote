@@ -878,7 +878,7 @@ export function playVideoSegment(videoUrl, startMs, endMs, { onStart, onEnd, onE
 }
 
 // High-level: given quote text, audio URL/file, and SRT URL/file, find timestamps and play audio segment
-export async function playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, { onStart, onEnd, onError } = {}) {
+export async function playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, { onStart, onEnd, onError, subtitleOffset = 0 } = {}) {
   try {
     if (!srtUrl) {
       throw new Error('Subtitle file is not configured. Please upload a subtitle file in the media settings.')
@@ -920,10 +920,13 @@ export async function playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, { on
     
     // Use the span from startIndex to endIndex
     // Pad a bit around for naturalness (500ms before start, 500ms after end)
-    const startMs = Math.max(0, entries[startIndex].startMs - 500)
-    const endMs = entries[endIndex].endMs + 500
+    // Apply subtitle offset (in milliseconds) - positive values shift forward, negative shift backward
+    const baseStartMs = entries[startIndex].startMs - 500
+    const baseEndMs = entries[endIndex].endMs + 500
+    const startMs = Math.max(0, baseStartMs + subtitleOffset)
+    const endMs = baseEndMs + subtitleOffset
     
-    console.log(`Playing from entry ${startIndex} to ${endIndex}, time range: ${startMs}ms to ${endMs}ms (${((endMs - startMs) / 1000).toFixed(2)}s)`)
+    console.log(`Playing from entry ${startIndex} to ${endIndex}, time range: ${startMs}ms to ${endMs}ms (${((endMs - startMs) / 1000).toFixed(2)}s), offset: ${subtitleOffset}ms`)
     
     // Play audio segment from the uploaded audio file
     return playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onError })

@@ -198,7 +198,11 @@ export async function setMovieMediaConfigPersisted(movieId, { videoUrl, audioUrl
 export async function getMovieMediaConfigLocal(movieId) {
   try {
     const raw = localStorage.getItem(LS_PREFIX + movieId)
-    const cfg = raw ? JSON.parse(raw) : { videoUrl: '', audioUrl: '', srtUrl: '' }
+    const cfg = raw ? JSON.parse(raw) : { videoUrl: '', audioUrl: '', srtUrl: '', subtitleOffset: 0 }
+    // Ensure subtitleOffset exists (default to 0)
+    if (cfg.subtitleOffset === undefined) {
+      cfg.subtitleOffset = 0
+    }
     console.log(`[getMovieMediaConfigLocal] Loading config for movie ${movieId}:`, {
       srtUrlType: cfg.srtUrl ? (cfg.srtUrl.startsWith('data:local-srt:') ? 'local' : 'other') : 'empty',
       srtUrlLength: cfg.srtUrl ? cfg.srtUrl.length : 0,
@@ -503,11 +507,14 @@ export async function setMovieMediaConfigLocal(movieId, { videoUrl, audioUrl, sr
     removeAudioFromIndexedDB(storageKey)
   }
   
-  localStorage.setItem(LS_PREFIX + movieId, JSON.stringify({ 
-    videoUrl: videoUrl || '', 
-    audioUrl: audioUrlToStore,
-    srtUrl: srtUrlToStore 
-  }))
+        const existingConfig = localStorage.getItem(LS_PREFIX + movieId)
+        const existing = existingConfig ? JSON.parse(existingConfig) : {}
+        localStorage.setItem(LS_PREFIX + movieId, JSON.stringify({
+          videoUrl: videoUrl || '',
+          audioUrl: audioUrlToStore,
+          srtUrl: srtUrlToStore,
+          subtitleOffset: existing.subtitleOffset || 0 // Preserve existing offset
+        }))
 }
 
 

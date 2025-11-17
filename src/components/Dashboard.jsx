@@ -588,6 +588,7 @@ export default function Dashboard() {
                       }
                       const quoteText = `"${todayQuote.quotes.quote}"${todayQuote.quotes.character ? ` by ${todayQuote.quotes.character}` : ''}`
                       await playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, {
+                        subtitleOffset: cfg.subtitleOffset || 0,
                         onStart: () => {
                           setIsPlaying(true)
                           setIsPausedState(false)

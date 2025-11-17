@@ -50,7 +50,7 @@ export default function Library() {
   const [browserVoices, setBrowserVoices] = useState([])
   const [loadingVoices, setLoadingVoices] = useState(false)
   const [showMediaSettings, setShowMediaSettings] = useState(false)
-  const [mediaConfig, setMediaConfig] = useState({ videoUrl: '', audioUrl: '', srtUrl: '' })
+  const [mediaConfig, setMediaConfig] = useState({ videoUrl: '', audioUrl: '', srtUrl: '', subtitleOffset: 0 })
   const [srtFileName, setSrtFileName] = useState('')
   const [audioFileName, setAudioFileName] = useState('')
 
@@ -326,7 +326,7 @@ export default function Library() {
     
     // Load media config for this movie
     const cfg = await getMovieMediaConfigPersisted(movie.id)
-    setMediaConfig(cfg)
+    setMediaConfig({ ...cfg, subtitleOffset: cfg.subtitleOffset || 0 })
     // Try to get filename from localStorage if available
     if (isLocalSrtContent(cfg.srtUrl)) {
       const storedFileName = localStorage.getItem(`movie-srt-filename-${movie.id}`)
@@ -645,9 +645,9 @@ export default function Library() {
                           const file = e.target.files?.[0]
                           if (!file) return
                           
-                          // Check file size (warn if > 10MB, but allow up to 150MB)
+                          // Check file size (warn if > 10MB, but allow up to 175MB)
                           const maxRecommendedSize = 10 * 1024 * 1024 // 10MB
-                          const maxSize = 150 * 1024 * 1024 // 150MB
+                          const maxSize = 175 * 1024 * 1024 // 175MB
                             if (file.size > maxSize) {
                               alert(`File is too large (${(file.size / 1024 / 1024).toFixed(2)}MB). Maximum size is ${(maxSize / 1024 / 1024).toFixed(0)}MB. Please use a smaller file.`)
                               return
@@ -730,6 +730,57 @@ export default function Library() {
                     </div>
                 </div>
 
+                {/* Subtitle Timing Offset */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Subtitle Timing Offset
+                  </label>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
+                    Adjust if subtitles don't match the audio timing. Positive values shift forward, negative shifts backward.
+                  </p>
+                  <div className="flex items-center space-x-4">
+                    <input
+                      type="range"
+                      min="-5000"
+                      max="5000"
+                      step="100"
+                      value={mediaConfig.subtitleOffset || 0}
+                      onChange={(e) => setMediaConfig({ ...mediaConfig, subtitleOffset: parseInt(e.target.value) || 0 })}
+                      className="flex-1"
+                    />
+                    <div className="w-24 text-right">
+                      <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                        {(mediaConfig.subtitleOffset || 0) > 0 ? '+' : ''}
+                        {((mediaConfig.subtitleOffset || 0) / 1000).toFixed(1)}s
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    <span>-5.0s</span>
+                    <span>0.0s</span>
+                    <span>+5.0s</span>
+                  </div>
+                  <div className="mt-2 flex space-x-2">
+                    <button
+                      onClick={() => setMediaConfig({ ...mediaConfig, subtitleOffset: (mediaConfig.subtitleOffset || 0) - 500 })}
+                      className="btn-secondary text-xs px-3 py-1"
+                    >
+                      -0.5s
+                    </button>
+                    <button
+                      onClick={() => setMediaConfig({ ...mediaConfig, subtitleOffset: (mediaConfig.subtitleOffset || 0) + 500 })}
+                      className="btn-secondary text-xs px-3 py-1"
+                    >
+                      +0.5s
+                    </button>
+                    <button
+                      onClick={() => setMediaConfig({ ...mediaConfig, subtitleOffset: 0 })}
+                      className="btn-secondary text-xs px-3 py-1"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
@@ -877,6 +928,13 @@ export default function Library() {
                             ? mediaConfig.srtUrl 
                             : ''
                         })
+                        
+                        // Save subtitle offset
+                        const LS_PREFIX = 'movie-media-'
+                        const raw = localStorage.getItem(LS_PREFIX + selectedMovie.id)
+                        const cfg = raw ? JSON.parse(raw) : {}
+                        cfg.subtitleOffset = mediaConfig.subtitleOffset || 0
+                        localStorage.setItem(LS_PREFIX + selectedMovie.id, JSON.stringify(cfg))
                         alert('Media configuration saved successfully!')
                         setShowMediaSettings(false)
                       } catch (error) {
@@ -980,6 +1038,7 @@ export default function Library() {
                                   console.log('Starting playback:', { quoteText: quoteText.substring(0, 50), hasAudio: !!audioUrl, hasSrt: !!srtUrl })
                                   
                                   await playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, {
+                                    subtitleOffset: mediaConfig.subtitleOffset || 0,
                                     onStart: () => {
                                       console.log('Playback started')
                                       setPlayingQuoteId(quote.id)
