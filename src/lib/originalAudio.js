@@ -151,15 +151,15 @@ export function findBestSubtitleMatch(quoteText, entries) {
     
     // Check if this entry contains the first 3+ words in sequence
     // This is more specific than just checking individual words
-    const firstThreeWords = firstWords.slice(0, Math.min(3, firstWords.length)).join(' ')
-    const firstFourWords = firstWords.slice(0, Math.min(4, firstWords.length)).join(' ')
+    const firstThreeWords = firstWords.slice(0, Math.min(3, firstWords.length))
+    const firstFourWords = firstWords.slice(0, Math.min(4, firstWords.length))
     
     // Check if entry contains the first few words in sequence
-    const hasFirstSequence = entryText.includes(firstThreeWords) || entryText.includes(firstFourWords)
+    const hasFirstSequence = containsWordSequence(entryText, firstThreeWords) || containsWordSequence(entryText, firstFourWords)
     
     // Also check individual word matches (at least 3 words from start)
     const matchingFirstWords = firstWords.filter(word => 
-      word.length > 2 && entryText.includes(word)
+      word.length > 2 && containsWholeWord(entryText, word)
     )
     
     // More strict: need sequence match OR at least 3 word matches
@@ -178,14 +178,14 @@ export function findBestSubtitleMatch(quoteText, entries) {
       const entryText = normalize(entries[i].text)
       
       // Check if this entry contains the last few words in sequence
-      const lastThreeWords = lastWords.slice(Math.max(0, lastWords.length - 3)).join(' ')
-      const lastFourWords = lastWords.slice(Math.max(0, lastWords.length - 4)).join(' ')
+      const lastThreeWords = lastWords.slice(Math.max(0, lastWords.length - 3))
+      const lastFourWords = lastWords.slice(Math.max(0, lastWords.length - 4))
       
-      const hasLastSequence = entryText.includes(lastThreeWords) || entryText.includes(lastFourWords)
+      const hasLastSequence = containsWordSequence(entryText, lastThreeWords) || containsWordSequence(entryText, lastFourWords)
       
       // Also check individual word matches
       const matchingLastWords = lastWords.filter(word => 
-        word.length > 2 && entryText.includes(word)
+        word.length > 2 && containsWholeWord(entryText, word)
       )
       
       // If we find the end sequence or at least 3 words from end, mark as end
@@ -287,6 +287,27 @@ function similarity(a, b) {
     if (bWords.has(w)) overlap++
   }
   return overlap / Math.max(1, Math.max(aWords.size, bWords.size))
+}
+
+function escapeRegex(str = '') {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function containsWholeWord(text, word) {
+  if (!word) return false
+  const pattern = new RegExp(`\\b${escapeRegex(word)}\\b`, 'i')
+  return pattern.test(text)
+}
+
+function containsWordSequence(text, words = []) {
+  if (!text || !words || words.length === 0) return false
+  const escapedWords = words
+    .filter(Boolean)
+    .map(word => escapeRegex(word))
+    .join('\\s+')
+  if (!escapedWords) return false
+  const pattern = new RegExp(`\\b${escapedWords}\\b`, 'i')
+  return pattern.test(text)
 }
 
 // Fetch SRT text - supports both URLs and local file content
