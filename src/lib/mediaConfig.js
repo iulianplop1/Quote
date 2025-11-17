@@ -397,7 +397,10 @@ export async function getMovieMediaConfigLocal(movieId) {
     
     if (isBlobMarker || isAudioMarker) {
       const storageKey = LS_AUDIO_PREFIX + movieId
-      const useIndexedDB = localStorage.getItem(storageKey + '-idb') === 'true'
+      
+      // For blob-stored, always check IndexedDB first (blobs are always in IndexedDB)
+      // For regular stored, check the flag
+      const useIndexedDB = isBlobMarker || localStorage.getItem(storageKey + '-idb') === 'true'
       
       console.log(`[getMovieMediaConfigLocal] Loading audio content for movie ${movieId}, useIndexedDB: ${useIndexedDB}, isBlob: ${isBlobMarker}`)
       
@@ -405,6 +408,18 @@ export async function getMovieMediaConfigLocal(movieId) {
       if (useIndexedDB) {
         localAudioContent = await getAudioFromIndexedDB(storageKey)
         console.log(`[getMovieMediaConfigLocal] Audio content from IndexedDB, type: ${typeof localAudioContent}, isBlob: ${localAudioContent instanceof Blob}`)
+        
+        // If blob marker but got a string, it might be legacy data - try localStorage
+        if (isBlobMarker && typeof localAudioContent === 'string' && localAudioContent.length < 100) {
+          console.log(`[getMovieMediaConfigLocal] Blob marker but got string, checking if blob exists...`)
+          // The blob should be there, but let's verify by checking if it's actually a blob
+          // Try to get it again or check localStorage for the actual blob
+          const blobFromStorage = await getAudioFromIndexedDB(storageKey)
+          if (blobFromStorage instanceof Blob) {
+            localAudioContent = blobFromStorage
+            console.log(`[getMovieMediaConfigLocal] Found blob in IndexedDB`)
+          }
+        }
       } else {
         localAudioContent = localStorage.getItem(storageKey)
         console.log(`[getMovieMediaConfigLocal] Audio content from localStorage, type: ${typeof localAudioContent}, length: ${localAudioContent ? localAudioContent.length : 'null'}`)
@@ -420,17 +435,33 @@ export async function getMovieMediaConfigLocal(movieId) {
           cfg.audioUrl = createLocalAudioUrl(dataUrl)
           console.log(`[getMovieMediaConfigLocal] Audio blob loaded, created blob URL, size: ${localAudioContent.size} bytes, type: ${mimeType}`)
         } else if (typeof localAudioContent === 'string') {
-          // Legacy: base64 string content
-          const isValidContent = localAudioContent.length > 100
-          
-          if (isValidContent) {
-            // The stored content should be the full data URL (data:audio/mpeg;base64,...)
-            // or just the base64 content. Wrap it with createLocalAudioUrl to create the proper format
-            cfg.audioUrl = createLocalAudioUrl(localAudioContent)
-            console.log(`[getMovieMediaConfigLocal] Audio content loaded successfully (legacy base64), final URL length: ${cfg.audioUrl.length}`)
+          // If it's "blob-stored" marker string, try to load from IndexedDB as blob
+          if (localAudioContent === 'blob-stored' || localAudioContent.trim() === 'blob-stored') {
+            console.log(`[getMovieMediaConfigLocal] Found blob-stored marker, loading blob from IndexedDB...`)
+            const blobFromIDB = await getAudioFromIndexedDB(storageKey)
+            if (blobFromIDB instanceof Blob) {
+              const blobUrl = URL.createObjectURL(blobFromIDB)
+              const mimeType = localStorage.getItem(storageKey + '-type') || blobFromIDB.type || 'audio/mpeg'
+              const dataUrl = `data:${mimeType};blob-url:${blobUrl}`
+              cfg.audioUrl = createLocalAudioUrl(dataUrl)
+              console.log(`[getMovieMediaConfigLocal] Audio blob loaded from IndexedDB (from marker), size: ${blobFromIDB.size} bytes`)
+            } else {
+              console.warn(`[getMovieMediaConfigLocal] Blob marker found but blob not in IndexedDB`)
+              cfg.audioUrl = ''
+            }
           } else {
-            console.warn(`Local audio content is too short or invalid for movie ${movieId}, length: ${localAudioContent.length}`)
-            cfg.audioUrl = ''
+            // Legacy: base64 string content
+            const isValidContent = localAudioContent.length > 100
+            
+            if (isValidContent) {
+              // The stored content should be the full data URL (data:audio/mpeg;base64,...)
+              // or just the base64 content. Wrap it with createLocalAudioUrl to create the proper format
+              cfg.audioUrl = createLocalAudioUrl(localAudioContent)
+              console.log(`[getMovieMediaConfigLocal] Audio content loaded successfully (legacy base64), final URL length: ${cfg.audioUrl.length}`)
+            } else {
+              console.warn(`Local audio content is too short or invalid for movie ${movieId}, length: ${localAudioContent.length}`)
+              cfg.audioUrl = ''
+            }
           }
         } else {
           // If it's not a string or Blob, something went wrong
@@ -528,26 +559,32 @@ export async function setMovieMediaConfigLocal(movieId, { videoUrl, audioUrl, sr
   let audioUrlToStore = audioUrl || ''
   if (isLocalAudioContent(audioUrl)) {
     const content = getLocalAudioContent(audioUrl)
-    console.log(`[setMovieMediaConfigLocal] Audio content extracted, length:`, content ? content.length : 0)
+    console.log(`[setMovieMediaConfigLocal] Audio content extracted, length:`, content ? content.length : 0, 'is blob-stored:', content === 'blob-stored')
     
     // Don't overwrite existing content with a marker!
-    if (!content || content === 'stored' || (typeof content === 'string' && content.trim() === '')) {
+    if (!content || content === 'stored' || content === 'blob-stored' || (typeof content === 'string' && content.trim() === '')) {
       console.log(`[setMovieMediaConfigLocal] Audio is marker, not overwriting existing content`)
       // Check if we already have content stored
       const storageKey = LS_AUDIO_PREFIX + movieId
-      const useIndexedDB = localStorage.getItem(storageKey + '-idb') === 'true'
+      const useIndexedDB = localStorage.getItem(storageKey + '-idb') === 'true' || content === 'blob-stored'
       let existingContent = null
       if (useIndexedDB) {
         existingContent = await getAudioFromIndexedDB(storageKey)
       } else {
         existingContent = localStorage.getItem(storageKey)
       }
-      if (existingContent && existingContent !== 'stored') {
-        audioUrlToStore = LOCAL_AUDIO_PREFIX + 'stored'
+      if (existingContent && existingContent !== 'stored' && existingContent !== 'blob-stored') {
+        // Keep the marker that matches the storage type
+        if (content === 'blob-stored' || (existingContent instanceof Blob)) {
+          audioUrlToStore = LOCAL_AUDIO_PREFIX + 'blob-stored'
+        } else {
+          audioUrlToStore = LOCAL_AUDIO_PREFIX + 'stored'
+        }
       } else {
         // No existing content, clear it
         localStorage.removeItem(storageKey)
         localStorage.removeItem(storageKey + '-idb')
+        localStorage.removeItem(storageKey + '-type')
         await removeAudioFromIndexedDB(storageKey)
         audioUrlToStore = ''
       }
