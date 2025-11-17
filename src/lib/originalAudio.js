@@ -129,62 +129,81 @@ function timestampToMs(ts) {
 
 // Find the best matching span of subtitle entries for a quote
 // Returns start index, end index, and score
+// Strategy: Find the first entry that contains the start of the quote, then expand forward
+// to find the last entry that contains the end of the quote
 export function findBestSubtitleMatch(quoteText, entries) {
   const target = normalize(quoteText)
   const targetWords = target.split(' ').filter(w => w.length > 0)
   
-  // Strategy: Find where the quote starts, then expand to find where it ends
-  // First, find potential starting points by matching the beginning of the quote
-  const quoteStartWords = targetWords.slice(0, Math.min(8, targetWords.length)).join(' ')
-  const quoteEndWords = targetWords.slice(Math.max(0, targetWords.length - 8)).join(' ')
+  // Get the first few words and last few words of the quote for matching
+  const firstWords = targetWords.slice(0, Math.min(5, targetWords.length))
+  const lastWords = targetWords.slice(Math.max(0, targetWords.length - 5))
+  const firstPhrase = firstWords.join(' ')
+  const lastPhrase = lastWords.join(' ')
   
-  let bestStartIdx = -1
-  let bestEndIdx = -1
-  let bestScore = -Infinity
+  console.log('[findBestSubtitleMatch] Looking for quote start:', firstPhrase, 'and end:', lastPhrase)
   
-  // Try to find entries that contain the start of the quote
-  for (let start = 0; start < entries.length; start++) {
-    const startEntryText = normalize(entries[start].text)
+  // Step 1: Find the first entry that contains words from the beginning of the quote
+  let startIdx = -1
+  for (let i = 0; i < entries.length; i++) {
+    const entryText = normalize(entries[i].text)
     
-    // Check if this entry contains words from the start of the quote
-    const startWordsMatch = quoteStartWords.split(' ').filter(w => w.length > 2)
-      .some(word => startEntryText.includes(word))
+    // Check if this entry contains any of the first words (at least 2 words must match)
+    const matchingFirstWords = firstWords.filter(word => 
+      word.length > 2 && entryText.includes(word)
+    )
     
-    if (startWordsMatch || similarity(quoteStartWords, startEntryText) > 0.3) {
-      // Found a potential start, now try to find the end
-      // Expand forward up to 20 entries to find where the quote ends
-      for (let end = start; end < Math.min(start + 20, entries.length); end++) {
-        const combinedText = entries.slice(start, end + 1)
-          .map(e => normalize(e.text))
-          .join(' ')
-        
-        const score = similarity(target, combinedText)
-        
-        // Also check if we've reached the end of the quote
-        const endWordsMatch = quoteEndWords.split(' ').filter(w => w.length > 2)
-          .some(word => normalize(entries[end].text).includes(word))
-        
-        // Prefer spans that include both start and end words
-        const adjustedScore = endWordsMatch ? score * 1.2 : score
-        
-        if (adjustedScore > bestScore) {
-          bestScore = adjustedScore
-          bestStartIdx = start
-          bestEndIdx = end
-        }
-        
-        // If we get a very good match and found the end words, stop
-        if (score > 0.7 && endWordsMatch) break
-      }
+    // If at least 2 words from the start match, or the entry text is similar to first phrase
+    if (matchingFirstWords.length >= 2 || similarity(firstPhrase, entryText) > 0.3) {
+      startIdx = i
+      console.log(`[findBestSubtitleMatch] Found potential start at entry ${i}: "${entries[i].text}"`)
+      break
     }
   }
   
-  // If we found a good span, return it
-  if (bestStartIdx >= 0 && bestEndIdx >= 0 && bestScore > 0.2) {
-    return { startIndex: bestStartIdx, endIndex: bestEndIdx, score: bestScore }
+  // Step 2: If we found a start, expand forward to find the end
+  let endIdx = startIdx
+  if (startIdx >= 0) {
+    // Look forward from the start entry (up to 25 entries ahead)
+    for (let i = startIdx; i < Math.min(startIdx + 25, entries.length); i++) {
+      const entryText = normalize(entries[i].text)
+      
+      // Check if this entry contains words from the end of the quote
+      const matchingLastWords = lastWords.filter(word => 
+        word.length > 2 && entryText.includes(word)
+      )
+      
+      // If at least 2 words from the end match, or entry is similar to last phrase
+      if (matchingLastWords.length >= 2 || similarity(lastPhrase, entryText) > 0.3) {
+        endIdx = i
+        console.log(`[findBestSubtitleMatch] Found potential end at entry ${i}: "${entries[i].text}"`)
+        // Don't break - continue to find the last matching entry
+      }
+    }
+    
+    // If we found both start and end, calculate the combined score
+    if (endIdx > startIdx) {
+      const combinedText = entries.slice(startIdx, endIdx + 1)
+        .map(e => normalize(e.text))
+        .join(' ')
+      const combinedScore = similarity(target, combinedText)
+      
+      console.log(`[findBestSubtitleMatch] Found span from entry ${startIdx} to ${endIdx}, score: ${combinedScore.toFixed(3)}`)
+      return { startIndex: startIdx, endIndex: endIdx, score: combinedScore }
+    } else if (startIdx >= 0) {
+      // Found start but no clear end - use the start entry and expand a bit forward
+      endIdx = Math.min(startIdx + 5, entries.length - 1)
+      const combinedText = entries.slice(startIdx, endIdx + 1)
+        .map(e => normalize(e.text))
+        .join(' ')
+      const combinedScore = similarity(target, combinedText)
+      console.log(`[findBestSubtitleMatch] Found start only, expanded to entry ${endIdx}, score: ${combinedScore.toFixed(3)}`)
+      return { startIndex: startIdx, endIndex: endIdx, score: combinedScore }
+    }
   }
   
-  // Fallback: try to find a single entry that matches well, then expand
+  // Fallback: Try to find best single entry match, then expand
+  console.log('[findBestSubtitleMatch] Fallback: searching for best single entry match')
   let bestSingleIdx = -1
   let bestSingleScore = -Infinity
   for (let i = 0; i < entries.length; i++) {
@@ -195,41 +214,40 @@ export function findBestSubtitleMatch(quoteText, entries) {
     }
   }
   
-  // If single entry has decent score, use it and try to expand aggressively
   if (bestSingleScore > 0.2) {
-    let bestEndIdx2 = bestSingleIdx
-    let bestExpandedScore = bestSingleScore
+    // Expand forward and backward from the best match
+    let bestStart = bestSingleIdx
+    let bestEnd = bestSingleIdx
     
-    // Try expanding forward more aggressively (up to 15 entries)
+    // Expand forward (up to 15 entries)
     for (let end = bestSingleIdx; end < Math.min(bestSingleIdx + 15, entries.length); end++) {
       const combinedText = entries.slice(bestSingleIdx, end + 1)
         .map(e => normalize(e.text))
         .join(' ')
-      
       const score = similarity(target, combinedText)
-      if (score > bestExpandedScore) {
-        bestExpandedScore = score
-        bestEndIdx2 = end
+      if (score > bestSingleScore) {
+        bestSingleScore = score
+        bestEnd = end
       }
     }
     
-    // Try expanding backward
-    let bestStartIdx2 = bestSingleIdx
-    for (let start = Math.max(0, bestSingleIdx - 8); start <= bestSingleIdx; start++) {
-      const combinedText = entries.slice(start, bestEndIdx2 + 1)
+    // Expand backward (up to 10 entries)
+    for (let start = Math.max(0, bestSingleIdx - 10); start <= bestSingleIdx; start++) {
+      const combinedText = entries.slice(start, bestEnd + 1)
         .map(e => normalize(e.text))
         .join(' ')
-      
       const score = similarity(target, combinedText)
-      if (score > bestExpandedScore) {
-        bestExpandedScore = score
-        bestStartIdx2 = start
+      if (score > bestSingleScore) {
+        bestSingleScore = score
+        bestStart = start
       }
     }
     
-    return { startIndex: bestStartIdx2, endIndex: bestEndIdx2, score: bestExpandedScore }
+    console.log(`[findBestSubtitleMatch] Fallback: using entry ${bestStart} to ${bestEnd}, score: ${bestSingleScore.toFixed(3)}`)
+    return { startIndex: bestStart, endIndex: bestEnd, score: bestSingleScore }
   }
   
+  console.log('[findBestSubtitleMatch] No match found')
   return { startIndex: -1, endIndex: -1, score: 0 }
 }
 
