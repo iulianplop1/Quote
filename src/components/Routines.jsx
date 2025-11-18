@@ -28,6 +28,7 @@ export default function Routines() {
   const [scheduledTime, setScheduledTime] = useState('08:00')
   const [selectedDays, setSelectedDays] = useState([1, 2, 3, 4, 5, 6, 7])
   const [selectedMovies, setSelectedMovies] = useState([])
+  const [selectedMovieCounts, setSelectedMovieCounts] = useState({})
   const [processing, setProcessing] = useState(false)
 
   const scheduledIntervalRef = useRef(null)
@@ -142,6 +143,7 @@ export default function Routines() {
           *,
           routine_movies (
             movie_id,
+            quote_limit,
             movies (
               id,
               title,
@@ -230,6 +232,7 @@ export default function Routines() {
       const routineMovies = selectedMovies.map(movieId => ({
         routine_id: routine.id,
         movie_id: movieId,
+        quote_limit: Math.max(1, selectedMovieCounts[movieId] || 3),
       }))
 
       const { error: moviesError } = await supabase
@@ -245,6 +248,8 @@ export default function Routines() {
       setScheduledTime('08:00')
       setSelectedDays([1, 2, 3, 4, 5, 6, 7])
       setSelectedMovies([])
+      setSelectedMovieCounts({})
+      setSelectedMovieCounts({})
       setShowAddModal(false)
       loadRoutines()
     } catch (error) {
@@ -349,19 +354,36 @@ export default function Routines() {
     }
 
     try {
-      const movieIds = routine.routine_movies?.map(rm => rm.movie_id) || []
+      const movieConfigs = routine.routine_movies || []
+      console.log('[Routine] Starting playback', {
+        routineId: routine.id,
+        quoteSources: movieConfigs.map((rm) => ({
+          movieId: rm.movie_id,
+          quoteLimit: rm.quote_limit || 3,
+          movieTitle: rm.movies?.title,
+        })),
+      })
       const allQuotes = []
 
-      for (const movieId of movieIds) {
+      for (const rm of movieConfigs) {
+        const quoteLimit = Math.max(1, rm.quote_limit || 3)
+        console.log('[Routine] Fetching quotes for movie', {
+          movieId: rm.movie_id,
+          requested: quoteLimit,
+        })
         const { data: quotes } = await supabase
           .from('quotes')
           .select('*')
-          .eq('movie_id', movieId)
+          .eq('movie_id', rm.movie_id)
           .gte('significance', 7)
           .order('significance', { ascending: false })
-          .limit(5)
+          .limit(quoteLimit)
 
         if (quotes) {
+          console.log('[Routine] Retrieved quotes', {
+            movieId: rm.movie_id,
+            count: quotes.length,
+          })
           allQuotes.push(...quotes)
         }
       }
@@ -371,6 +393,8 @@ export default function Routines() {
 
       if (allQuotes.length > 0) {
         await playQuotesSequentially(routine, allQuotes)
+      } else {
+        console.warn('[Routine] No quotes available for routine', routine.id)
       }
 
       if (playingRoutineId !== routine.id) {
@@ -393,6 +417,9 @@ export default function Routines() {
 
   const playRoutineSong = async (routine) => {
     if (!routine.song_audio_url || playingRoutineId !== routine.id) {
+      console.warn('[Routine] No song audio URL available, skipping song playback', {
+        routineId: routine.id,
+      })
       return
     }
 
@@ -410,12 +437,14 @@ export default function Routines() {
 
       audio.onended = finalize
       audio.onerror = (event) => {
+        console.error('[Routine] Song playback error', event)
         routineAudioRef.current = null
         songResolveRef.current = null
         reject(new Error('Error playing routine song. Please re-upload the file.'))
       }
 
       audio.play().catch((err) => {
+        console.error('[Routine] Song playback failed to start', err)
         routineAudioRef.current = null
         songResolveRef.current = null
         reject(err)
@@ -426,9 +455,16 @@ export default function Routines() {
   const playQuotesSequentially = async (routine, quotes) => {
     for (let index = 0; index < quotes.length; index++) {
       if (playingRoutineId !== routine.id) {
+        console.log('[Routine] Playback halted before quote sequence finished')
         return
       }
       currentQuoteIndexRef.current = index + 1
+      console.log('[Routine] Playing quote', {
+        routineId: routine.id,
+        index: index + 1,
+        total: quotes.length,
+        quoteId: quotes[index].id,
+      })
       await playQuoteForRoutine(routine.id, quotes[index])
     }
   }
@@ -464,12 +500,21 @@ export default function Routines() {
       try {
         const cfg = await getMovieMediaConfigPersisted(quote.movie_id)
         if (cfg.audioUrl && cfg.srtUrl) {
+          console.log('[Routine] Attempting original audio playback', {
+            routineId,
+            quoteId: quote.id,
+            movieId: quote.movie_id,
+          })
           const stopPlayback = await playOriginalQuoteSegment(quoteText, cfg.audioUrl, cfg.srtUrl, {
             subtitleOffset: cfg.subtitleOffset || 0,
             startTime: quote.start_time || null,
             endTime: quote.end_time || null,
             onEnd: finish,
             onError: () => {
+              console.warn('[Routine] Original audio failed, falling back to TTS', {
+                routineId,
+                quoteId: quote.id,
+              })
               fallbackToTTS()
             }
           })
@@ -488,6 +533,7 @@ export default function Routines() {
         console.warn('Error preparing original audio for routine:', error)
       }
 
+      console.log('[Routine] Using TTS for quote', { routineId, quoteId: quote.id })
       fallbackToTTS()
     })
   }
@@ -595,8 +641,17 @@ export default function Routines() {
   const toggleMovie = (movieId) => {
     if (selectedMovies.includes(movieId)) {
       setSelectedMovies(selectedMovies.filter(id => id !== movieId))
+      setSelectedMovieCounts((prev) => {
+        const next = { ...prev }
+        delete next[movieId]
+        return next
+      })
     } else {
       setSelectedMovies([...selectedMovies, movieId])
+      setSelectedMovieCounts((prev) => ({
+        ...prev,
+        [movieId]: prev[movieId] || 3,
+      }))
     }
   }
 
@@ -705,11 +760,21 @@ export default function Routines() {
                         </div>
                       )}
                       {routine.routine_movies && routine.routine_movies.length > 0 && (
-                        <div className="flex items-center gap-2">
-                          <Film size={16} />
-                          <span>
-                            {routine.routine_movies.length} movie{routine.routine_movies.length !== 1 ? 's' : ''}
-                          </span>
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <Film size={16} />
+                            <span>
+                              {routine.routine_movies.length} movie{routine.routine_movies.length !== 1 ? 's' : ''}
+                            </span>
+                          </div>
+                          <ul className="text-xs text-slate-500 dark:text-slate-400 pl-5 list-disc">
+                            {routine.routine_movies.map((rm) => (
+                              <li key={`${routine.id}-${rm.movie_id}`}>
+                                {(rm.movies && rm.movies.title) || 'Movie'} — {rm.quote_limit || 3} quote
+                                {Math.max(1, rm.quote_limit || 3) !== 1 ? 's' : ''}
+                              </li>
+                            ))}
+                          </ul>
                         </div>
                       )}
                     </div>
@@ -769,6 +834,7 @@ export default function Routines() {
                   setScheduledTime('08:00')
                   setSelectedDays([1, 2, 3, 4, 5, 6, 7])
                   setSelectedMovies([])
+                  setSelectedMovieCounts({})
                 }}
                 className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"
               >
@@ -868,30 +934,59 @@ export default function Routines() {
                     <div className="space-y-2">
                       {movies.map((movie) => {
                         const isSelected = selectedMovies.includes(movie.id)
+                        const currentCount = selectedMovieCounts[movie.id] || 3
                         return (
-                          <button
+                          <div
                             key={movie.id}
-                            onClick={() => toggleMovie(movie.id)}
-                            className={`w-full flex items-center gap-3 p-2 rounded transition-colors ${
+                            className={`rounded-lg border transition-colors ${
                               isSelected
-                                ? 'bg-primary-100 dark:bg-primary-900/20 border-2 border-primary-500'
-                                : 'bg-slate-50 dark:bg-slate-800 border-2 border-transparent hover:bg-slate-100 dark:hover:bg-slate-700'
+                                ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/10'
+                                : 'border-transparent bg-slate-50 dark:bg-slate-800'
                             }`}
                           >
-                            {movie.poster_url && (
-                              <img
-                                src={movie.poster_url}
-                                alt={movie.title}
-                                className="w-12 h-12 object-cover rounded"
-                              />
-                            )}
-                            <span className="flex-1 text-left text-sm font-medium">
-                              {movie.title}
-                            </span>
+                            <button
+                              onClick={() => toggleMovie(movie.id)}
+                              className="w-full flex items-center gap-3 p-2"
+                            >
+                              {movie.poster_url && (
+                                <img
+                                  src={movie.poster_url}
+                                  alt={movie.title}
+                                  className="w-12 h-12 object-cover rounded"
+                                />
+                              )}
+                              <span className="flex-1 text-left text-sm font-medium">
+                                {movie.title}
+                              </span>
+                              {isSelected && (
+                                <span className="text-primary-600 dark:text-primary-400">✓</span>
+                              )}
+                            </button>
                             {isSelected && (
-                              <span className="text-primary-600 dark:text-primary-400">✓</span>
+                              <div className="px-3 pb-3 flex items-center gap-2 text-xs sm:text-sm">
+                                <label className="font-medium text-slate-600 dark:text-slate-300">
+                                  Quotes:
+                                </label>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="20"
+                                  value={currentCount}
+                                  onChange={(e) => {
+                                    const value = Math.max(1, Math.min(20, Number(e.target.value) || 1))
+                                    setSelectedMovieCounts((prev) => ({
+                                      ...prev,
+                                      [movie.id]: value,
+                                    }))
+                                  }}
+                                  className="w-20 px-2 py-1 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100"
+                                />
+                                <span className="text-slate-500 dark:text-slate-400">
+                                  per routine
+                                </span>
+                              </div>
                             )}
-                          </button>
+                          </div>
                         )
                       })}
                     </div>
@@ -909,6 +1004,7 @@ export default function Routines() {
                     setScheduledTime('08:00')
                     setSelectedDays([1, 2, 3, 4, 5, 6, 7])
                     setSelectedMovies([])
+                    setSelectedMovieCounts({})
                   }}
                   className="btn-secondary flex-1"
                   disabled={processing}

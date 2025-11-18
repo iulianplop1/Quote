@@ -233,6 +233,7 @@ CREATE TABLE IF NOT EXISTS routine_movies (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   routine_id UUID NOT NULL REFERENCES routines(id) ON DELETE CASCADE,
   movie_id UUID NOT NULL REFERENCES movies(id) ON DELETE CASCADE,
+  quote_limit INTEGER DEFAULT 3,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   UNIQUE(routine_id, movie_id)
 );
