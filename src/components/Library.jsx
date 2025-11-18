@@ -31,6 +31,19 @@ const SUBTITLE_OFFSET_MIN = -600000 // -10 minutes in milliseconds
 const SUBTITLE_OFFSET_MAX = 600000 // +10 minutes in milliseconds
 const SUBTITLE_OFFSET_STEP = 100 // 0.1 second increments
 
+// Format timestamp in milliseconds to HH:MM:SS format
+const formatTimestamp = (ms) => {
+  if (ms === null || ms === undefined) return ''
+  const totalSeconds = Math.floor(ms / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  if (hours > 0) {
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+  }
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
+
 export default function Library() {
   const [movies, setMovies] = useState([])
   const [loading, setLoading] = useState(true)
@@ -209,6 +222,7 @@ export default function Library() {
     try {
       let quotes = []
       let scriptText = ''
+      let srtText = null // Store SRT text for later use
 
       if (addMethod === 'subtitle') {
         // Handle subtitle file
@@ -218,7 +232,7 @@ export default function Library() {
           return
         }
 
-        const srtText = await subtitleFile.text()
+        srtText = await subtitleFile.text()
         setProcessingProgress({ current: 0, total: 0, message: 'Parsing subtitle file...' })
         
         quotes = await parseSubtitleFile(srtText, movieTitle, (current, total) => {
@@ -264,8 +278,10 @@ export default function Library() {
       
       setProcessingProgress({ current: 1, total: 1, message: `Processing ${quotes.length} quotes...` })
 
-      // Get movie poster
+      // Get movie poster (works for all methods including subtitle files)
+      console.log(`[Movie Poster] Fetching poster for: "${movieTitle}"`)
       const posterUrl = await getMoviePoster(movieTitle)
+      console.log(`[Movie Poster] Retrieved poster URL: ${posterUrl ? posterUrl.substring(0, 100) : 'null'}`)
 
       // Save to Supabase
       const { data: { user } } = await supabase.auth.getUser()
@@ -372,6 +388,24 @@ export default function Library() {
       }
       
       console.log(`Successfully saved ${quotesToInsert.length} quotes to database`)
+
+      // If adding from subtitle file, automatically save the SRT file to media config
+      if (addMethod === 'subtitle' && srtText) {
+        try {
+          console.log(`[Auto-save SRT] Saving SRT file for movie ${movie.id}, length: ${srtText.length}`)
+          const srtUrl = createLocalSrtUrl(srtText)
+          await setMovieMediaConfigPersisted(movie.id, {
+            videoUrl: '',
+            audioUrl: '', // User will need to upload audio separately
+            srtUrl: srtUrl
+          })
+          localStorage.setItem(`movie-srt-filename-${movie.id}`, subtitleFile.name)
+          console.log(`[Auto-save SRT] Successfully saved SRT file "${subtitleFile.name}" for movie ${movie.id}`)
+        } catch (error) {
+          console.error('[Auto-save SRT] Error saving SRT file automatically:', error)
+          // Don't throw - this is not critical
+        }
+      }
 
       // Reset form and reload
       setMovieTitle('')
@@ -1163,6 +1197,14 @@ export default function Library() {
                               <span className="font-medium">{quote.character}</span>
                               <span>•</span>
                               <span>Significance: {quote.significance}/10</span>
+                              {quote.start_time !== null && quote.end_time !== null && (
+                                <>
+                                  <span>•</span>
+                                  <span className="text-xs">
+                                    {formatTimestamp(quote.start_time)} - {formatTimestamp(quote.end_time)}
+                                  </span>
+                                </>
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
@@ -1209,25 +1251,52 @@ export default function Library() {
                                   }
                                   
                                   const quoteText = quote.quote || ''
-                                  console.log('Starting playback:', { quoteText: quoteText.substring(0, 50), hasAudio: !!audioUrl, hasSrt: !!srtUrl, hasStoredTimestamps: !!(quote.start_time && quote.end_time) })
+                                  console.log('=== QUOTE PLAYBACK DEBUG ===')
+                                  console.log('Quote ID:', quote.id)
+                                  console.log('Quote text:', quoteText)
+                                  console.log('Quote text (first 100 chars):', quoteText.substring(0, 100))
+                                  console.log('Character:', quote.character)
+                                  console.log('Stored timestamps:', {
+                                    start_time: quote.start_time,
+                                    end_time: quote.end_time,
+                                    start_formatted: quote.start_time ? formatTimestamp(quote.start_time) : 'N/A',
+                                    end_formatted: quote.end_time ? formatTimestamp(quote.end_time) : 'N/A',
+                                    duration_ms: quote.start_time && quote.end_time ? (quote.end_time - quote.start_time) : null,
+                                    duration_sec: quote.start_time && quote.end_time ? ((quote.end_time - quote.start_time) / 1000).toFixed(2) : null
+                                  })
+                                  console.log('Media config:', {
+                                    hasAudio: !!audioUrl,
+                                    hasSrt: !!srtUrl,
+                                    audioType: audioUrl ? (audioUrl.startsWith('data:local-audio:') ? 'local' : 'url') : 'none',
+                                    srtType: srtUrl ? (srtUrl.startsWith('data:local-srt:') ? 'local' : 'url') : 'none',
+                                    subtitleOffset: mediaConfig.subtitleOffset || 0
+                                  })
+                                  console.log('Using stored timestamps:', !!(quote.start_time && quote.end_time))
+                                  console.log('==========================')
                                   
                                   const stopPlayback = await playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, {
                                     subtitleOffset: mediaConfig.subtitleOffset || 0,
                                     startTime: quote.start_time || null,
                                     endTime: quote.end_time || null,
                                     onStart: () => {
-                                      console.log('Playback started')
+                                      console.log('[QUOTE PLAYBACK] Started successfully')
+                                      console.log('[QUOTE PLAYBACK] Playing quote:', quoteText.substring(0, 50))
+                                      if (quote.start_time && quote.end_time) {
+                                        console.log('[QUOTE PLAYBACK] Using stored timestamps:', formatTimestamp(quote.start_time), 'to', formatTimestamp(quote.end_time))
+                                      }
                                       setPlayingQuoteId(quote.id)
                                       setIsPausedState(false)
                                     },
                                     onEnd: () => {
-                                      console.log('Playback ended')
+                                      console.log('[QUOTE PLAYBACK] Ended successfully')
                                       originalAudioStopRef.current = null
                                       setPlayingQuoteId(null)
                                       setIsPausedState(false)
                                     },
                                     onError: (e) => {
-                                      console.error('Original clip playback error:', e)
+                                      console.error('[QUOTE PLAYBACK] Error occurred:', e)
+                                      console.error('[QUOTE PLAYBACK] Error message:', e?.message)
+                                      console.error('[QUOTE PLAYBACK] Error stack:', e?.stack)
                                       const errorMsg = e?.message || 'Could not play original clip'
                                       
                                       // If files are not configured, offer to open settings

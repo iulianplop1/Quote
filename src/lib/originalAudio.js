@@ -367,6 +367,16 @@ export async function fetchSrt(srtUrl) {
 // Play a segment from audioUrl between [startMs, endMs] using a hidden <audio>
 // Returns a function to stop playback.
 export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onError } = {}) {
+  console.log('[playAudioSegment] Starting audio playback')
+  console.log('[playAudioSegment] Parameters:', {
+    audioUrl_type: audioUrl ? (audioUrl.startsWith('data:local-audio:') ? 'local' : 'url') : 'none',
+    audioUrl_length: audioUrl ? audioUrl.length : 0,
+    startMs,
+    endMs,
+    duration_ms: endMs - startMs,
+    duration_sec: ((endMs - startMs) / 1000).toFixed(2)
+  })
+  
   // Check if this is local audio content
   let audioSrc = audioUrl
   let blobUrlToCleanup = null // Track blob URLs we create so we can revoke them later
@@ -504,7 +514,20 @@ export function playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onE
   let playbackStarted = false
   
   audio.oncanplay = () => {
-    console.log('[playAudioSegment] Audio can play, readyState:', audio.readyState, 'duration:', audio.duration, 'currentTime:', audio.currentTime)
+    console.log('[playAudioSegment] Audio can play')
+    console.log('[playAudioSegment] Audio state:', {
+      readyState: audio.readyState,
+      duration: audio.duration,
+      currentTime: audio.currentTime,
+      paused: audio.paused,
+      muted: audio.muted,
+      volume: audio.volume
+    })
+    console.log('[playAudioSegment] Target playback:', {
+      startTime_sec: (startMs / 1000).toFixed(2),
+      endTime_sec: (endMs / 1000).toFixed(2),
+      duration_sec: ((endMs - startMs) / 1000).toFixed(2)
+    })
     
     // Prevent multiple play attempts
     if (playbackStarted || checkEnded()) {
@@ -932,15 +955,31 @@ export async function playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, { on
     
     // If timestamps are provided, use them directly
     if (startTime !== null && endTime !== null && startTime !== undefined && endTime !== undefined) {
-      console.log('Using stored timestamps:', { startTime, endTime })
+      console.log('[playOriginalQuoteSegment] Using stored timestamps from database')
+      console.log('[playOriginalQuoteSegment] Stored timestamps:', {
+        startTime_ms: startTime,
+        endTime_ms: endTime,
+        duration_ms: endTime - startTime,
+        duration_sec: ((endTime - startTime) / 1000).toFixed(2)
+      })
       // Pad a bit around for naturalness (500ms before start, 500ms after end)
       // Apply subtitle offset (in milliseconds)
       const baseStartMs = startTime - 500
       const baseEndMs = endTime + 500
       startMs = Math.max(0, baseStartMs + subtitleOffset)
       endMs = baseEndMs + subtitleOffset
-      console.log(`Playing using stored timestamps: ${startMs}ms to ${endMs}ms (${((endMs - startMs) / 1000).toFixed(2)}s), offset: ${subtitleOffset}ms`)
+      console.log('[playOriginalQuoteSegment] Final playback timestamps:', {
+        original_start: startTime,
+        original_end: endTime,
+        padded_start: baseStartMs,
+        padded_end: baseEndMs,
+        offset: subtitleOffset,
+        final_start: startMs,
+        final_end: endMs,
+        final_duration_sec: ((endMs - startMs) / 1000).toFixed(2)
+      })
     } else {
+      console.log('[playOriginalQuoteSegment] No stored timestamps, searching in SRT file')
       // Fallback to searching subtitles if timestamps not available
       if (!srtUrl) {
         throw new Error('Subtitle file is not configured. Please upload a subtitle file in the media settings.')
@@ -960,9 +999,25 @@ export async function playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, { on
         throw new Error('No subtitle entries could be parsed from the SRT file. Please check that your SRT file is in the correct format.')
       }
       
-      console.log('Searching for quote in subtitles:', quoteText.substring(0, 50))
+      console.log('[playOriginalQuoteSegment] Searching for quote in subtitles')
+      console.log('[playOriginalQuoteSegment] Quote text to match:', quoteText.substring(0, 100))
+      console.log('[playOriginalQuoteSegment] Total SRT entries:', entries.length)
       const { startIndex, endIndex, score } = findBestSubtitleMatch(quoteText, entries)
-      console.log('Best match found:', { startIndex, endIndex, score, startEntry: startIndex >= 0 ? entries[startIndex] : null, endEntry: endIndex >= 0 ? entries[endIndex] : null })
+      console.log('[playOriginalQuoteSegment] Best match found:', {
+        startIndex,
+        endIndex,
+        matchScore: score,
+        startEntry: startIndex >= 0 ? {
+          text: entries[startIndex].text.substring(0, 100),
+          startMs: entries[startIndex].startMs,
+          endMs: entries[startIndex].endMs
+        } : null,
+        endEntry: endIndex >= 0 ? {
+          text: entries[endIndex].text.substring(0, 100),
+          startMs: entries[endIndex].startMs,
+          endMs: entries[endIndex].endMs
+        } : null
+      })
       // Lower threshold to 0.1 since we're using more lenient matching
       if (startIndex < 0 || endIndex < 0 || score < 0.1) {
         throw new Error(`Could not locate quote "${quoteText.substring(0, 50)}..." in subtitles. The quote text may not match the subtitle content, or the subtitles may be for a different version of the movie.`)
@@ -976,8 +1031,25 @@ export async function playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, { on
       startMs = Math.max(0, baseStartMs + subtitleOffset)
       endMs = baseEndMs + subtitleOffset
       
-      console.log(`Playing from entry ${startIndex} to ${endIndex}, time range: ${startMs}ms to ${endMs}ms (${((endMs - startMs) / 1000).toFixed(2)}s), offset: ${subtitleOffset}ms`)
+      console.log('[playOriginalQuoteSegment] Final playback timestamps from SRT search:', {
+        entry_range: `${startIndex} to ${endIndex}`,
+        original_start: entries[startIndex].startMs,
+        original_end: entries[endIndex].endMs,
+        padded_start: baseStartMs,
+        padded_end: baseEndMs,
+        offset: subtitleOffset,
+        final_start: startMs,
+        final_end: endMs,
+        final_duration_sec: ((endMs - startMs) / 1000).toFixed(2)
+      })
     }
+    
+    console.log('[playOriginalQuoteSegment] Calling playAudioSegment with:', {
+      audioUrl_type: audioUrl ? (audioUrl.startsWith('data:local-audio:') ? 'local' : 'url') : 'none',
+      startMs,
+      endMs,
+      duration_sec: ((endMs - startMs) / 1000).toFixed(2)
+    })
     
     // Play audio segment from the uploaded audio file
     return playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onError })
