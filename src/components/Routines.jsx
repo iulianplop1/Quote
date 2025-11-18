@@ -64,13 +64,16 @@ export default function Routines() {
       clearInterval(scheduledIntervalRef.current)
     }
 
-    // Set up new interval
+    // Set up new interval - check every 10 seconds for more responsive triggering
+    // (Still prevents duplicate playback within 60 seconds)
     scheduledIntervalRef.current = setInterval(() => {
       checkAndPlayRoutines()
-    }, 60000) // Check every minute
+    }, 10000) // Check every 10 seconds for better responsiveness
 
     // Check immediately
     checkAndPlayRoutines()
+    
+    console.log('[Routine Setup] Scheduled playback checker started (checks every 10 seconds)')
 
     return () => {
       if (scheduledIntervalRef.current) {
@@ -539,11 +542,39 @@ export default function Routines() {
     const now = new Date()
     const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
     const currentDay = now.getDay() === 0 ? 7 : now.getDay() // Convert Sunday from 0 to 7
+    
+    // Log time check for debugging
+    console.log('[Routine Check]', {
+      currentTime: currentTime,
+      currentDay: currentDay,
+      dayName: DAYS[currentDay - 1],
+      routinesCount: currentRoutines.length,
+      enabledRoutines: currentRoutines.filter(r => r.enabled).length,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      localTimeString: now.toLocaleTimeString()
+    })
 
     for (const routine of currentRoutines) {
-      if (!routine.enabled) continue
-      if (routine.scheduled_time.substring(0, 5) !== currentTime) continue
-      if (!routine.days_of_week.includes(currentDay)) continue
+      if (!routine.enabled) {
+        console.log(`[Routine Check] Skipping "${routine.name}" - disabled`)
+        continue
+      }
+      
+      const routineTime = routine.scheduled_time.substring(0, 5)
+      if (routineTime !== currentTime) {
+        // Only log once per routine to avoid spam
+        if (Math.random() < 0.01) { // Log 1% of the time
+          console.log(`[Routine Check] "${routine.name}" - time mismatch: scheduled=${routineTime}, current=${currentTime}`)
+        }
+        continue
+      }
+      
+      if (!routine.days_of_week.includes(currentDay)) {
+        console.log(`[Routine Check] Skipping "${routine.name}" - not scheduled for ${DAYS[currentDay - 1]}`)
+        continue
+      }
+      
+      console.log(`[Routine Check] ✓ "${routine.name}" matches! Scheduled: ${routineTime}, Current: ${currentTime}, Day: ${DAYS[currentDay - 1]}`)
 
       // Check if we already played this routine in the last minute
       const lastPlayedKey = `routine-last-played-${routine.id}`
@@ -606,6 +637,20 @@ export default function Routines() {
           </h1>
           <p className="text-slate-600 dark:text-slate-400">
             Create scheduled routines that play a song and quotes at specific times
+            <br />
+            <span className="text-xs">
+              Current time: <strong>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</strong> ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+              {' • '}
+              <button
+                onClick={() => {
+                  console.log('[Manual Check] Triggering routine check manually...')
+                  checkAndPlayRoutines()
+                }}
+                className="text-primary-600 dark:text-primary-400 hover:underline"
+              >
+                Test Check Now
+              </button>
+            </span>
           </p>
         </div>
         <button
@@ -634,6 +679,14 @@ export default function Routines() {
               .sort()
               .map(d => DAYS[d - 1].substring(0, 3))
               .join(', ')
+            
+            // Check if this routine should play now
+            const now = new Date()
+            const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+            const currentDay = now.getDay() === 0 ? 7 : now.getDay()
+            const isScheduledNow = routine.enabled && 
+                                   routine.scheduled_time.substring(0, 5) === currentTime &&
+                                   routine.days_of_week.includes(currentDay)
 
             return (
               <div key={routine.id} className="card">
@@ -652,11 +705,19 @@ export default function Routines() {
                       >
                         {routine.enabled ? 'Enabled' : 'Disabled'}
                       </span>
+                      {isScheduledNow && (
+                        <span className="px-2 py-1 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 animate-pulse">
+                          Playing Now
+                        </span>
+                      )}
                     </div>
                     <div className="space-y-1 text-sm text-slate-600 dark:text-slate-400">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <Clock size={16} />
-                        <span>{routine.scheduled_time.substring(0, 5)}</span>
+                        <span>Scheduled: {routine.scheduled_time.substring(0, 5)}</span>
+                        <span className="text-xs text-slate-500 dark:text-slate-500">
+                          (Your time: {currentTime})
+                        </span>
                         <span>•</span>
                         <Calendar size={16} />
                         <span>{daysText}</span>
@@ -786,6 +847,11 @@ export default function Routines() {
                   onChange={(e) => setScheduledTime(e.target.value)}
                   className="input-field"
                 />
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Uses your device's local time. Current time: {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  <br />
+                  Timezone: {Intl.DateTimeFormat().resolvedOptions().timeZone}
+                </p>
               </div>
 
               <div>
