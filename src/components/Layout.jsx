@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { Home, BookOpen, Search, Settings, Moon, Sun, LogOut } from 'lucide-react'
+import { Home, BookOpen, Search, Settings, Moon, Sun, LogOut, Clock } from 'lucide-react'
 import { useState, useEffect } from 'react'
 
 export default function Layout({ children }) {
@@ -28,6 +28,7 @@ export default function Layout({ children }) {
     { path: '/', icon: Home, label: 'Dashboard' },
     { path: '/library', icon: BookOpen, label: 'Library' },
     { path: '/discover', icon: Search, label: 'Discover' },
+    { path: '/routines', icon: Clock, label: 'Routines' },
     { path: '/settings', icon: Settings, label: 'Settings' },
   ]
 

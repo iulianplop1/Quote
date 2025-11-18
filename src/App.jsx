@@ -6,6 +6,7 @@ import Dashboard from './components/Dashboard'
 import Library from './components/Library'
 import Discover from './components/Discover'
 import Settings from './components/Settings'
+import Routines from './components/Routines'
 import Layout from './components/Layout'
 
 function App() {
@@ -80,6 +81,18 @@ function App() {
             user ? (
               <Layout>
                 <Discover />
+              </Layout>
+            ) : (
+              <Navigate to="/login" />
+            )
+          }
+        />
+        <Route
+          path="/routines"
+          element={
+            user ? (
+              <Layout>
+                <Routines />
               </Layout>
             ) : (
               <Navigate to="/login" />

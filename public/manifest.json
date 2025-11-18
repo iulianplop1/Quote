@@ -1,0 +1,30 @@
+{
+  "name": "Quote - Daily Movie Quotes",
+  "short_name": "Quote",
+  "description": "Daily movie quotes with scheduled routines",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#3b82f6",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["entertainment", "lifestyle"],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Routines",
+      "short_name": "Routines",
+      "description": "View your routines",
+      "url": "/routines",
+      "icons": [{ "src": "/vite.svg", "sizes": "any" }]
+    }
+  ]
+}
+
