@@ -14,13 +14,18 @@ const LOCAL_AUDIO_PREFIX = 'data:local-audio:'
 // IndexedDB helper functions for large audio files
 async function getIndexedDB() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open('QuoteAppDB', 1)
+    const request = indexedDB.open('QuoteAppDB', 2) // Increment to version 2
     request.onerror = () => reject(request.error)
     request.onsuccess = () => resolve(request.result)
     request.onupgradeneeded = (event) => {
       const db = event.target.result
+      // Create movie-audio-files store if it doesn't exist
       if (!db.objectStoreNames.contains(IDB_STORE_NAME)) {
         db.createObjectStore(IDB_STORE_NAME)
+      }
+      // Create routine-songs store if it doesn't exist
+      if (!db.objectStoreNames.contains('routine-songs')) {
+        db.createObjectStore('routine-songs')
       }
     }
   })

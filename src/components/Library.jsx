@@ -845,13 +845,16 @@ export default function Library() {
                               try {
                                 // Store blob directly in IndexedDB
                                 const db = await new Promise((resolve, reject) => {
-                                  const request = indexedDB.open('QuoteAppDB', 1)
+                                  const request = indexedDB.open('QuoteAppDB', 2) // Use version 2
                                   request.onerror = () => reject(request.error)
                                   request.onsuccess = () => resolve(request.result)
                                   request.onupgradeneeded = (event) => {
                                     const db = event.target.result
                                     if (!db.objectStoreNames.contains('movie-audio-files')) {
                                       db.createObjectStore('movie-audio-files')
+                                    }
+                                    if (!db.objectStoreNames.contains('routine-songs')) {
+                                      db.createObjectStore('routine-songs')
                                     }
                                   }
                                 })

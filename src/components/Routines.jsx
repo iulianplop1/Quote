@@ -82,37 +82,50 @@ export default function Routines() {
   const registerServiceWorker = async () => {
     if ('serviceWorker' in navigator) {
       try {
-        const registration = await navigator.serviceWorker.register('/sw.js')
-        console.log('Service Worker registered:', registration)
+        // Use correct path based on base URL (for GitHub Pages)
+        const base = import.meta.env.MODE === 'production' ? '/Quote' : ''
+        const swPath = `${base}/sw.js`
+        
+        try {
+          const registration = await navigator.serviceWorker.register(swPath, {
+            scope: base || '/'
+          })
+          console.log('Service Worker registered successfully:', registration)
 
-        // Request notification permission
-        if ('Notification' in window && Notification.permission === 'default') {
-          await Notification.requestPermission()
-        }
+          // Request notification permission
+          if ('Notification' in window && Notification.permission === 'default') {
+            await Notification.requestPermission()
+          }
 
-        // Request periodic background sync (for Android)
-        if ('periodicSync' in registration) {
-          try {
-            await registration.periodicSync.register('routine-check', {
-              minInterval: 60000, // Check every minute
-            })
-            console.log('Periodic background sync registered')
-          } catch (error) {
-            console.warn('Periodic background sync not available:', error)
+          // Request periodic background sync (for Android)
+          if ('periodicSync' in registration) {
+            try {
+              await registration.periodicSync.register('routine-check', {
+                minInterval: 60000, // Check every minute
+              })
+              console.log('Periodic background sync registered')
+            } catch (error) {
+              console.warn('Periodic background sync not available:', error)
+            }
+          }
+
+          // Listen for service worker messages
+          navigator.serviceWorker.addEventListener('message', (event) => {
+            if (event.data && (event.data.type === 'CHECK_ROUTINES' || event.data.type === 'TRIGGER_ROUTINE')) {
+              checkAndPlayRoutines()
+            }
+          })
+        } catch (swError) {
+          // Service worker registration is optional - don't break the app
+          console.warn('Service Worker registration failed (this is OK, routines will still work):', swError.message)
+          // Still request notification permission even if SW fails
+          if ('Notification' in window && Notification.permission === 'default') {
+            await Notification.requestPermission()
           }
         }
       } catch (error) {
-        console.error('Service Worker registration failed:', error)
+        console.warn('Service Worker setup error (non-critical):', error)
       }
-    }
-
-    // Listen for service worker messages
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.addEventListener('message', (event) => {
-        if (event.data.type === 'CHECK_ROUTINES' || event.data.type === 'TRIGGER_ROUTINE') {
-          checkAndPlayRoutines()
-        }
-      })
     }
   }
 
@@ -188,13 +201,18 @@ export default function Routines() {
         
         try {
           const db = await new Promise((resolve, reject) => {
-            const request = indexedDB.open('QuoteAppDB', 1)
+            const request = indexedDB.open('QuoteAppDB', 2) // Increment version to trigger upgrade
             request.onerror = () => reject(request.error)
             request.onsuccess = () => resolve(request.result)
             request.onupgradeneeded = (event) => {
               const db = event.target.result
+              // Create routine-songs store if it doesn't exist
               if (!db.objectStoreNames.contains('routine-songs')) {
                 db.createObjectStore('routine-songs')
+              }
+              // Also ensure movie-audio-files exists (for compatibility)
+              if (!db.objectStoreNames.contains('movie-audio-files')) {
+                db.createObjectStore('movie-audio-files')
               }
             }
           })
@@ -203,16 +221,28 @@ export default function Routines() {
             const transaction = db.transaction(['routine-songs'], 'readwrite')
             const store = transaction.objectStore('routine-songs')
             const request = store.put(songFile, storageKey)
-            request.onsuccess = () => resolve()
-            request.onerror = () => reject(request.error)
+            request.onsuccess = () => {
+              console.log(`[Routine] Successfully stored song in IndexedDB, key: ${storageKey}`)
+              resolve()
+            }
+            request.onerror = () => {
+              console.error('[Routine] IndexedDB put error:', request.error)
+              reject(request.error)
+            }
           })
           
           localStorage.setItem(storageKey + '-idb', 'true')
           localStorage.setItem(storageKey + '-type', songFile.type || 'audio/mpeg')
           localStorage.setItem(storageKey + '-url', audioUrl)
+          console.log(`[Routine] Stored song metadata in localStorage for key: ${storageKey}`)
         } catch (error) {
-          console.error('Error storing audio:', error)
-          throw new Error('Failed to store audio file')
+          console.error('[Routine] Error storing audio file:', error)
+          console.error('[Routine] Error details:', {
+            name: error.name,
+            message: error.message,
+            stack: error.stack
+          })
+          throw new Error(`Failed to store audio file: ${error.message}`)
         }
       }
 
@@ -366,9 +396,18 @@ export default function Routines() {
             if (storageKeys.length > 0) {
               const storageKey = storageKeys[0].replace('-url', '')
               const db = await new Promise((resolve, reject) => {
-                const request = indexedDB.open('QuoteAppDB', 1)
+                const request = indexedDB.open('QuoteAppDB', 2) // Use version 2
                 request.onerror = () => reject(request.error)
                 request.onsuccess = () => resolve(request.result)
+                request.onupgradeneeded = (event) => {
+                  const db = event.target.result
+                  if (!db.objectStoreNames.contains('routine-songs')) {
+                    db.createObjectStore('routine-songs')
+                  }
+                  if (!db.objectStoreNames.contains('movie-audio-files')) {
+                    db.createObjectStore('movie-audio-files')
+                  }
+                }
               })
               
               const blob = await new Promise((resolve, reject) => {

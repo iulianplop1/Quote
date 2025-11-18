@@ -10,9 +10,9 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       react(),
-      // Plugin to copy index.html to 404.html for GitHub Pages SPA routing
+      // Plugin to copy index.html to 404.html and sw.js for GitHub Pages
       {
-        name: 'copy-404',
+        name: 'copy-files',
         closeBundle() {
           if (isProduction) {
             try {
@@ -21,8 +21,19 @@ export default defineConfig(({ mode }) => {
               const notFoundPath = join(distPath, '404.html')
               copyFileSync(indexPath, notFoundPath)
               console.log('✓ Created 404.html for GitHub Pages')
+              
+              // Copy service worker
+              const publicPath = join(process.cwd(), 'public')
+              const swSourcePath = join(publicPath, 'sw.js')
+              const swDestPath = join(distPath, 'sw.js')
+              try {
+                copyFileSync(swSourcePath, swDestPath)
+                console.log('✓ Copied sw.js to dist')
+              } catch (swError) {
+                console.warn('Warning: Could not copy sw.js:', swError.message)
+              }
             } catch (error) {
-              console.error('Error creating 404.html:', error)
+              console.error('Error copying files:', error)
             }
           }
         }
