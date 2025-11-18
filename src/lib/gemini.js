@@ -387,3 +387,182 @@ ${scriptText}`
   }
 }
 
+// Parse SRT file and extract quotes with timestamps
+// Returns quotes with start_time and end_time in milliseconds
+export async function parseSubtitleFile(srtText, movieTitle, onProgress) {
+  // First, parse the SRT file to get entries with timestamps
+  const { parseSrtToEntries } = await import('./originalAudio.js')
+  const entries = parseSrtToEntries(srtText)
+  
+  if (entries.length === 0) {
+    throw new Error('No subtitle entries found in the SRT file')
+  }
+  
+  // Group entries into chunks for processing (max 50 entries per chunk)
+  const CHUNK_SIZE = 50
+  const chunks = []
+  for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
+    chunks.push(entries.slice(i, i + CHUNK_SIZE))
+  }
+  
+  const allQuotes = []
+  
+  // Process chunks sequentially to avoid overwhelming the API
+  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+    const chunk = chunks[chunkIndex]
+    
+    if (onProgress) {
+      onProgress(chunkIndex + 1, chunks.length)
+    }
+    
+    // Create a text representation of the chunk with timestamps
+    const chunkText = chunk.map((entry, idx) => {
+      const startTime = formatTimestamp(entry.startMs)
+      const endTime = formatTimestamp(entry.endMs)
+      return `[${startTime} --> ${endTime}] ${entry.text}`
+    }).join('\n')
+    
+    const prompt = `You are analyzing subtitle entries from "${movieTitle}" to extract ONLY the most epic, memorable, and deeply meaningful quotes.
+
+Extract ONLY quotes that are:
+- Iconic and memorable (people would remember and quote them)
+- Deeply meaningful, philosophical, or thought-provoking
+- Cinematic and epic in tone
+- Thematically significant to the story
+- Poetic, metaphorical, or profound
+
+SKIP generic quotes like:
+- Commands or instructions ("Give them over", "Hang them", "Go there")
+- Simple statements of fact ("He's gone", "It's over")
+- Filler dialogue ("Yes", "No", "Okay", "What?", "Hello")
+- Casual conversation or small talk
+- Exposition that's not profound
+- Action-oriented dialogue without deeper meaning
+
+For each quote you extract, return the EXACT text from the subtitle entry (or combine multiple entries if the quote spans them), and include the start and end timestamps.
+
+Return a JSON array in this exact format:
+[
+  {
+    "quote": "The exact quote text from the subtitle",
+    "character": "CHARACTER_NAME or UNKNOWN",
+    "significance": 9,
+    "start_time_ms": 12345,
+    "end_time_ms": 23456
+  },
+  ...
+]
+
+CRITICAL RULES:
+1. Significance scoring (1-10):
+   - 9-10: Iconic, legendary quotes that define the movie
+   - 7-8: Deeply meaningful, memorable quotes with philosophical weight
+   - 5-6: Significant quotes with some depth
+   - 1-4: Skip these - don't include quotes below 7
+
+2. Use the EXACT timestamps from the subtitle entries (start_time_ms and end_time_ms in milliseconds)
+3. If a quote spans multiple entries, combine them and use the first entry's start time and last entry's end time
+4. Quality over quantity: Only extract 3-10 of the BEST quotes per chunk
+5. Return ONLY valid JSON, no markdown or extra text
+6. Character names should be clean (no extra formatting)
+7. If a character name is unclear, use "UNKNOWN"
+
+Subtitle entries:
+${chunkText}`
+
+    try {
+      const result = await generateContentWithRetry(prompt)
+      const response = await result.response
+      const text = response.text()
+      
+      // Clean the response to extract JSON
+      let jsonMatch = text.match(/\[[\s\S]*\]/)
+      if (!jsonMatch) {
+        jsonMatch = text.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/)
+        if (jsonMatch) {
+          jsonMatch = [jsonMatch[1], jsonMatch[1]]
+        }
+      }
+      
+      if (!jsonMatch) {
+        console.warn(`No JSON found in response for chunk ${chunkIndex + 1}`)
+        continue
+      }
+      
+      let jsonText = jsonMatch[0]
+      jsonText = jsonText.replace(/,(\s*[}\]])/g, '$1')
+      
+      let quotes
+      try {
+        quotes = JSON.parse(jsonText)
+      } catch (parseError) {
+        console.warn(`JSON parse failed for chunk ${chunkIndex + 1}:`, parseError)
+        continue
+      }
+      
+      if (!Array.isArray(quotes)) {
+        console.warn(`Parsed JSON is not an array for chunk ${chunkIndex + 1}`)
+        continue
+      }
+      
+      // Validate and add quotes, matching them back to subtitle entries for accurate timestamps
+      for (const quote of quotes) {
+        if (quote.quote && quote.quote.trim()) {
+          // Ensure significance is at least 7
+          const significance = Math.max(7, quote.significance || 7)
+          if (significance >= 7) {
+            // Try to find the quote in the subtitle entries to get accurate timestamps
+            const quoteText = quote.quote.trim()
+            let startTime = quote.start_time_ms
+            let endTime = quote.end_time_ms
+            
+            // If timestamps weren't provided or seem incorrect, try to find them in the subtitle entries
+            if (startTime === undefined || endTime === undefined || startTime === null || endTime === null) {
+              // Find matching entry in the chunk
+              const normalizedQuote = quoteText.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ')
+              for (const entry of chunk) {
+                const normalizedEntry = entry.text.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ')
+                // Check if entry contains significant portion of the quote
+                if (normalizedEntry.includes(normalizedQuote.substring(0, Math.min(20, normalizedQuote.length))) ||
+                    normalizedQuote.includes(normalizedEntry.substring(0, Math.min(20, normalizedEntry.length)))) {
+                  startTime = entry.startMs
+                  endTime = entry.endMs
+                  break
+                }
+              }
+            }
+            
+            // Only add if we have valid timestamps
+            if (startTime !== undefined && endTime !== undefined && startTime !== null && endTime !== null) {
+              allQuotes.push({
+                quote: quoteText,
+                character: quote.character || 'UNKNOWN',
+                significance: significance,
+                start_time: startTime,
+                end_time: endTime
+              })
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`Error processing chunk ${chunkIndex + 1}:`, error)
+      // Continue with next chunk instead of failing completely
+      continue
+    }
+  }
+  
+  return allQuotes
+}
+
+// Helper function to format milliseconds to timestamp string
+function formatTimestamp(ms) {
+  const totalSeconds = Math.floor(ms / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  const milliseconds = ms % 1000
+  
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`
+}
+

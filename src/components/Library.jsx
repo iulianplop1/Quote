@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { Plus, Trash2, Upload, Link as LinkIcon, Loader2, Quote, X, Volume2, VolumeX, Pause, Play, Settings, PlayCircle, Film } from 'lucide-react'
-import { parseScript } from '../lib/gemini'
+import { parseScript, parseSubtitleFile } from '../lib/gemini'
 import { fetchScriptFromUrl } from '../lib/scriptFetcher'
 import { getMoviePoster } from '../lib/tmdb'
 import { 
@@ -35,10 +35,11 @@ export default function Library() {
   const [movies, setMovies] = useState([])
   const [loading, setLoading] = useState(true)
   const [showAddModal, setShowAddModal] = useState(false)
-  const [addMethod, setAddMethod] = useState('url') // 'url' or 'upload'
+  const [addMethod, setAddMethod] = useState('url') // 'url', 'upload', or 'subtitle'
   const [movieTitle, setMovieTitle] = useState('')
   const [scriptUrl, setScriptUrl] = useState('')
   const [scriptFile, setScriptFile] = useState(null)
+  const [subtitleFile, setSubtitleFile] = useState(null)
   const [processing, setProcessing] = useState(false)
   const [processingProgress, setProcessingProgress] = useState(null)
   const [selectedMovie, setSelectedMovie] = useState(null)
@@ -163,6 +164,41 @@ export default function Library() {
     }
   }
 
+  // Check for duplicate quotes (normalized comparison)
+  const normalizeQuote = (text) => {
+    return text.toLowerCase().trim().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ')
+  }
+
+  const checkDuplicateQuotes = async (movieId, newQuotes) => {
+    // Get existing quotes for this movie
+    const { data: existingQuotes, error } = await supabase
+      .from('quotes')
+      .select('quote')
+      .eq('movie_id', movieId)
+
+    if (error) {
+      console.error('Error checking duplicates:', error)
+      return newQuotes // If check fails, proceed with all quotes
+    }
+
+    const existingNormalized = new Set(
+      (existingQuotes || []).map(q => normalizeQuote(q.quote))
+    )
+
+    // Filter out duplicates
+    const uniqueQuotes = newQuotes.filter(q => {
+      const normalized = normalizeQuote(q.quote)
+      return !existingNormalized.has(normalized)
+    })
+
+    const duplicatesCount = newQuotes.length - uniqueQuotes.length
+    if (duplicatesCount > 0) {
+      console.log(`Filtered out ${duplicatesCount} duplicate quotes`)
+    }
+
+    return uniqueQuotes
+  }
+
   const handleAddMovie = async () => {
     if (!movieTitle.trim()) {
       alert('Please enter a movie title')
@@ -171,36 +207,62 @@ export default function Library() {
 
     setProcessing(true)
     try {
+      let quotes = []
       let scriptText = ''
 
-      if (addMethod === 'url') {
-        if (!scriptUrl.trim()) {
-          alert('Please enter a script URL')
+      if (addMethod === 'subtitle') {
+        // Handle subtitle file
+        if (!subtitleFile) {
+          alert('Please select a subtitle file')
           setProcessing(false)
           return
         }
-        scriptText = await fetchScriptFromUrl(scriptUrl)
-      } else {
-        if (!scriptFile) {
-          alert('Please select a file')
-          setProcessing(false)
-          return
-        }
-        scriptText = await scriptFile.text()
-      }
 
-      // Parse script with Gemini (with progress feedback)
-      setProcessingProgress({ current: 0, total: 0, message: 'Parsing script...' })
-      const quotes = await parseScript(scriptText, movieTitle, (current, total) => {
-        setProcessingProgress({ current, total, message: `Processing script part ${current} of ${total}...` })
-      })
-      
-      if (!quotes || quotes.length === 0) {
-        throw new Error('No quotes were extracted from the script. Please check the script format.')
+        const srtText = await subtitleFile.text()
+        setProcessingProgress({ current: 0, total: 0, message: 'Parsing subtitle file...' })
+        
+        quotes = await parseSubtitleFile(srtText, movieTitle, (current, total) => {
+          setProcessingProgress({ current, total, message: `Processing subtitle chunk ${current} of ${total}...` })
+        })
+        
+        if (!quotes || quotes.length === 0) {
+          throw new Error('No quotes were extracted from the subtitle file. Please check the file format.')
+        }
+        
+        console.log(`Extracted ${quotes.length} quotes from subtitle file`)
+        scriptText = `Subtitle file: ${subtitleFile.name}` // Store filename as script_text for subtitle-based movies
+      } else {
+        // Handle script URL or file upload
+        if (addMethod === 'url') {
+          if (!scriptUrl.trim()) {
+            alert('Please enter a script URL')
+            setProcessing(false)
+            return
+          }
+          scriptText = await fetchScriptFromUrl(scriptUrl)
+        } else {
+          if (!scriptFile) {
+            alert('Please select a file')
+            setProcessing(false)
+            return
+          }
+          scriptText = await scriptFile.text()
+        }
+
+        // Parse script with Gemini (with progress feedback)
+        setProcessingProgress({ current: 0, total: 0, message: 'Parsing script...' })
+        quotes = await parseScript(scriptText, movieTitle, (current, total) => {
+          setProcessingProgress({ current, total, message: `Processing script part ${current} of ${total}...` })
+        })
+        
+        if (!quotes || quotes.length === 0) {
+          throw new Error('No quotes were extracted from the script. Please check the script format.')
+        }
+        
+        console.log(`Extracted ${quotes.length} quotes from script`)
       }
       
-      console.log(`Extracted ${quotes.length} quotes from script`)
-      setProcessingProgress({ current: 1, total: 1, message: `Saving ${quotes.length} quotes to database...` })
+      setProcessingProgress({ current: 1, total: 1, message: `Processing ${quotes.length} quotes...` })
 
       // Get movie poster
       const posterUrl = await getMoviePoster(movieTitle)
@@ -208,51 +270,82 @@ export default function Library() {
       // Save to Supabase
       const { data: { user } } = await supabase.auth.getUser()
 
-      // Insert movie
-      const { data: movie, error: movieError } = await supabase
+      // Check if movie already exists
+      const { data: existingMovies } = await supabase
         .from('movies')
-        .insert({
-          user_id: user.id,
-          title: movieTitle,
-          script_text: scriptText,
-          poster_url: posterUrl,
-        })
-        .select()
-        .single()
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('title', movieTitle)
+        .maybeSingle()
 
-      if (movieError) throw movieError
+      let movie
+      if (existingMovies) {
+        // Movie exists, use it
+        movie = existingMovies
+        setProcessingProgress({ current: 1, total: 1, message: `Adding quotes to existing movie...` })
+      } else {
+        // Insert movie
+        const { data: newMovie, error: movieError } = await supabase
+          .from('movies')
+          .insert({
+            user_id: user.id,
+            title: movieTitle,
+            script_text: scriptText,
+            poster_url: posterUrl,
+          })
+          .select()
+          .single()
+
+        if (movieError) throw movieError
+        movie = newMovie
+      }
 
       // Filter quotes by significance - only keep high-quality quotes (significance >= 7)
-      // This ensures we only store memorable, meaningful quotes
-      const highQualityQuotes = quotes.filter(q => {
-        const significance = q.significance || 5
-        const quoteText = (q.quote || '').trim()
-        // Only keep quotes with significance >= 7 and meaningful content
-        return significance >= 7 && quoteText.length > 10 && quoteText.length < 500
-      })
-
+      // For subtitle files, quotes already have significance >= 7
       let quotesToSave = []
-      if (highQualityQuotes.length === 0) {
-        console.warn('No high-quality quotes found (significance >= 7). All quotes:', quotes.length)
-        // If no high-quality quotes, keep the top 20% by significance as fallback
-        const sortedQuotes = [...quotes].sort((a, b) => (b.significance || 5) - (a.significance || 5))
-        quotesToSave = sortedQuotes.slice(0, Math.max(10, Math.floor(quotes.length * 0.2)))
-        if (quotesToSave.length === 0) {
-          throw new Error('No valid quotes to save. The script may not contain memorable dialogue.')
-        }
-        console.log(`Using fallback: saving top ${quotesToSave.length} quotes by significance`)
+      if (addMethod === 'subtitle') {
+        // Subtitle quotes are already filtered for significance >= 7
+        quotesToSave = quotes.filter(q => {
+          const quoteText = (q.quote || '').trim()
+          return quoteText.length > 10 && quoteText.length < 500
+        })
       } else {
-        console.log(`Filtered to ${highQualityQuotes.length} high-quality quotes (significance >= 7) out of ${quotes.length} total`)
-        quotesToSave = highQualityQuotes
+        const highQualityQuotes = quotes.filter(q => {
+          const significance = q.significance || 5
+          const quoteText = (q.quote || '').trim()
+          return significance >= 7 && quoteText.length > 10 && quoteText.length < 500
+        })
+
+        if (highQualityQuotes.length === 0) {
+          console.warn('No high-quality quotes found (significance >= 7). All quotes:', quotes.length)
+          const sortedQuotes = [...quotes].sort((a, b) => (b.significance || 5) - (a.significance || 5))
+          quotesToSave = sortedQuotes.slice(0, Math.max(10, Math.floor(quotes.length * 0.2)))
+          if (quotesToSave.length === 0) {
+            throw new Error('No valid quotes to save. The script may not contain memorable dialogue.')
+          }
+          console.log(`Using fallback: saving top ${quotesToSave.length} quotes by significance`)
+        } else {
+          console.log(`Filtered to ${highQualityQuotes.length} high-quality quotes (significance >= 7) out of ${quotes.length} total`)
+          quotesToSave = highQualityQuotes
+        }
+      }
+
+      // Check for duplicates
+      const uniqueQuotes = await checkDuplicateQuotes(movie.id, quotesToSave)
+      
+      if (uniqueQuotes.length === 0) {
+        throw new Error('All quotes are duplicates. No new quotes to add.')
       }
 
       // Insert quotes in batches to avoid timeout issues
       const BATCH_SIZE = 100
-      const quotesToInsert = quotesToSave.map(q => ({
+      const quotesToInsert = uniqueQuotes.map(q => ({
         movie_id: movie.id,
         character: q.character || 'UNKNOWN',
         quote: q.quote || '',
-        significance: q.significance || 5,
+        significance: q.significance || 7,
+        start_time: q.start_time || null,
+        end_time: q.end_time || null,
       })).filter(q => q.quote.trim().length > 0) // Filter out empty quotes
 
       if (quotesToInsert.length === 0) {
@@ -284,6 +377,7 @@ export default function Library() {
       setMovieTitle('')
       setScriptUrl('')
       setScriptFile(null)
+      setSubtitleFile(null)
       setProcessingProgress(null)
       setShowAddModal(false)
       loadMovies()
@@ -320,6 +414,32 @@ export default function Library() {
     } catch (error) {
       console.error('Error deleting movie:', error)
       alert('Error deleting movie: ' + error.message)
+    }
+  }
+
+  const handleDeleteQuote = async (quoteId) => {
+    if (!confirm('Are you sure you want to delete this quote?')) {
+      return
+    }
+
+    try {
+      const { error } = await supabase.from('quotes').delete().eq('id', quoteId)
+      
+      if (error) throw error
+      
+      // Remove from local state
+      setMovieQuotes(movieQuotes.filter(q => q.id !== quoteId))
+      
+      // If this quote was playing, stop it
+      if (playingQuoteId === quoteId) {
+        stopSpeaking()
+        stopOriginalAudio()
+        setPlayingQuoteId(null)
+        setIsPausedState(false)
+      }
+    } catch (error) {
+      console.error('Error deleting quote:', error)
+      alert('Error deleting quote: ' + error.message)
     }
   }
 
@@ -1089,10 +1209,12 @@ export default function Library() {
                                   }
                                   
                                   const quoteText = quote.quote || ''
-                                  console.log('Starting playback:', { quoteText: quoteText.substring(0, 50), hasAudio: !!audioUrl, hasSrt: !!srtUrl })
+                                  console.log('Starting playback:', { quoteText: quoteText.substring(0, 50), hasAudio: !!audioUrl, hasSrt: !!srtUrl, hasStoredTimestamps: !!(quote.start_time && quote.end_time) })
                                   
                                   const stopPlayback = await playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, {
                                     subtitleOffset: mediaConfig.subtitleOffset || 0,
+                                    startTime: quote.start_time || null,
+                                    endTime: quote.end_time || null,
                                     onStart: () => {
                                       console.log('Playback started')
                                       setPlayingQuoteId(quote.id)
@@ -1144,6 +1266,13 @@ export default function Library() {
                                 <VolumeX size={18} className="text-slate-600 dark:text-slate-400" />
                               </button>
                             )}
+                            <button
+                              onClick={() => handleDeleteQuote(quote.id)}
+                              className="p-2 hover:bg-red-100 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                              title="Delete quote"
+                            >
+                              <Trash2 size={18} className="text-red-600 dark:text-red-400" />
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -1179,10 +1308,10 @@ export default function Library() {
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                   Add Method
                 </label>
-                <div className="flex space-x-4">
+                <div className="grid grid-cols-3 gap-2">
                   <button
                     onClick={() => setAddMethod('url')}
-                    className={`flex-1 px-4 py-2 rounded-lg border-2 transition-colors ${
+                    className={`px-4 py-2 rounded-lg border-2 transition-colors ${
                       addMethod === 'url'
                         ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
                         : 'border-slate-300 dark:border-slate-600'
@@ -1193,14 +1322,25 @@ export default function Library() {
                   </button>
                   <button
                     onClick={() => setAddMethod('upload')}
-                    className={`flex-1 px-4 py-2 rounded-lg border-2 transition-colors ${
+                    className={`px-4 py-2 rounded-lg border-2 transition-colors ${
                       addMethod === 'upload'
                         ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
                         : 'border-slate-300 dark:border-slate-600'
                     }`}
                   >
                     <Upload className="mx-auto mb-1" size={20} />
-                    <span className="text-sm">Upload File</span>
+                    <span className="text-sm">Script File</span>
+                  </button>
+                  <button
+                    onClick={() => setAddMethod('subtitle')}
+                    className={`px-4 py-2 rounded-lg border-2 transition-colors ${
+                      addMethod === 'subtitle'
+                        ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                        : 'border-slate-300 dark:border-slate-600'
+                    }`}
+                  >
+                    <Film className="mx-auto mb-1" size={20} />
+                    <span className="text-sm">Subtitle File</span>
                   </button>
                 </div>
               </div>
@@ -1218,7 +1358,7 @@ export default function Library() {
                     placeholder="https://imsdb.com/scripts/Dark-Knight-Rises,-The.html"
                   />
                 </div>
-              ) : (
+              ) : addMethod === 'upload' ? (
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                     Script File
@@ -1227,6 +1367,21 @@ export default function Library() {
                     type="file"
                     accept=".txt,.html"
                     onChange={(e) => setScriptFile(e.target.files[0])}
+                    className="input-field"
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Subtitle File (SRT)
+                  </label>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
+                    Upload an SRT subtitle file. The app will extract meaningful quotes with timestamps.
+                  </p>
+                  <input
+                    type="file"
+                    accept=".srt,.txt"
+                    onChange={(e) => setSubtitleFile(e.target.files[0])}
                     className="input-field"
                   />
                 </div>
@@ -1239,6 +1394,7 @@ export default function Library() {
                     setMovieTitle('')
                     setScriptUrl('')
                     setScriptFile(null)
+                    setSubtitleFile(null)
                     setProcessingProgress(null)
                   }}
                   className="btn-secondary flex-1"

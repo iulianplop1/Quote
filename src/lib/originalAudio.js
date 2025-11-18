@@ -913,12 +913,9 @@ export function playVideoSegment(videoUrl, startMs, endMs, { onStart, onEnd, onE
 }
 
 // High-level: given quote text, audio URL/file, and SRT URL/file, find timestamps and play audio segment
-export async function playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, { onStart, onEnd, onError, subtitleOffset = 0 } = {}) {
+// If startTime and endTime are provided (in milliseconds), use them directly instead of searching subtitles
+export async function playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, { onStart, onEnd, onError, subtitleOffset = 0, startTime = null, endTime = null } = {}) {
   try {
-    if (!srtUrl) {
-      throw new Error('Subtitle file is not configured. Please upload a subtitle file in the media settings.')
-    }
-    
     if (!audioUrl) {
       throw new Error('Audio file is not configured. Please upload an audio file in the media settings.')
     }
@@ -931,37 +928,56 @@ export async function playOriginalQuoteSegment(quoteText, audioUrl, srtUrl, { on
       }
     }
     
-    const srt = await fetchSrt(srtUrl)
-    if (!srt || !srt.trim()) {
-      throw new Error('Subtitle file is empty. Please upload a valid SRT file.')
+    let startMs, endMs
+    
+    // If timestamps are provided, use them directly
+    if (startTime !== null && endTime !== null && startTime !== undefined && endTime !== undefined) {
+      console.log('Using stored timestamps:', { startTime, endTime })
+      // Pad a bit around for naturalness (500ms before start, 500ms after end)
+      // Apply subtitle offset (in milliseconds)
+      const baseStartMs = startTime - 500
+      const baseEndMs = endTime + 500
+      startMs = Math.max(0, baseStartMs + subtitleOffset)
+      endMs = baseEndMs + subtitleOffset
+      console.log(`Playing using stored timestamps: ${startMs}ms to ${endMs}ms (${((endMs - startMs) / 1000).toFixed(2)}s), offset: ${subtitleOffset}ms`)
+    } else {
+      // Fallback to searching subtitles if timestamps not available
+      if (!srtUrl) {
+        throw new Error('Subtitle file is not configured. Please upload a subtitle file in the media settings.')
+      }
+      
+      const srt = await fetchSrt(srtUrl)
+      if (!srt || !srt.trim()) {
+        throw new Error('Subtitle file is empty. Please upload a valid SRT file.')
+      }
+      
+      console.log('SRT fetched, length:', srt.length, 'first 200 chars:', srt.substring(0, 200))
+      
+      const entries = parseSrtToEntries(srt) // This will throw a helpful error if parsing fails
+      console.log('SRT parsed, found', entries.length, 'entries')
+      
+      if (entries.length === 0) {
+        throw new Error('No subtitle entries could be parsed from the SRT file. Please check that your SRT file is in the correct format.')
+      }
+      
+      console.log('Searching for quote in subtitles:', quoteText.substring(0, 50))
+      const { startIndex, endIndex, score } = findBestSubtitleMatch(quoteText, entries)
+      console.log('Best match found:', { startIndex, endIndex, score, startEntry: startIndex >= 0 ? entries[startIndex] : null, endEntry: endIndex >= 0 ? entries[endIndex] : null })
+      // Lower threshold to 0.1 since we're using more lenient matching
+      if (startIndex < 0 || endIndex < 0 || score < 0.1) {
+        throw new Error(`Could not locate quote "${quoteText.substring(0, 50)}..." in subtitles. The quote text may not match the subtitle content, or the subtitles may be for a different version of the movie.`)
+      }
+      
+      // Use the span from startIndex to endIndex
+      // Pad a bit around for naturalness (500ms before start, 500ms after end)
+      // Apply subtitle offset (in milliseconds) - positive values shift forward, negative shift backward
+      const baseStartMs = entries[startIndex].startMs - 500
+      const baseEndMs = entries[endIndex].endMs + 500
+      startMs = Math.max(0, baseStartMs + subtitleOffset)
+      endMs = baseEndMs + subtitleOffset
+      
+      console.log(`Playing from entry ${startIndex} to ${endIndex}, time range: ${startMs}ms to ${endMs}ms (${((endMs - startMs) / 1000).toFixed(2)}s), offset: ${subtitleOffset}ms`)
     }
-    
-    console.log('SRT fetched, length:', srt.length, 'first 200 chars:', srt.substring(0, 200))
-    
-    const entries = parseSrtToEntries(srt) // This will throw a helpful error if parsing fails
-    console.log('SRT parsed, found', entries.length, 'entries')
-    
-    if (entries.length === 0) {
-      throw new Error('No subtitle entries could be parsed from the SRT file. Please check that your SRT file is in the correct format.')
-    }
-    
-    console.log('Searching for quote in subtitles:', quoteText.substring(0, 50))
-    const { startIndex, endIndex, score } = findBestSubtitleMatch(quoteText, entries)
-    console.log('Best match found:', { startIndex, endIndex, score, startEntry: startIndex >= 0 ? entries[startIndex] : null, endEntry: endIndex >= 0 ? entries[endIndex] : null })
-    // Lower threshold to 0.1 since we're using more lenient matching
-    if (startIndex < 0 || endIndex < 0 || score < 0.1) {
-      throw new Error(`Could not locate quote "${quoteText.substring(0, 50)}..." in subtitles. The quote text may not match the subtitle content, or the subtitles may be for a different version of the movie.`)
-    }
-    
-    // Use the span from startIndex to endIndex
-    // Pad a bit around for naturalness (500ms before start, 500ms after end)
-    // Apply subtitle offset (in milliseconds) - positive values shift forward, negative shift backward
-    const baseStartMs = entries[startIndex].startMs - 500
-    const baseEndMs = entries[endIndex].endMs + 500
-    const startMs = Math.max(0, baseStartMs + subtitleOffset)
-    const endMs = baseEndMs + subtitleOffset
-    
-    console.log(`Playing from entry ${startIndex} to ${endIndex}, time range: ${startMs}ms to ${endMs}ms (${((endMs - startMs) / 1000).toFixed(2)}s), offset: ${subtitleOffset}ms`)
     
     // Play audio segment from the uploaded audio file
     return playAudioSegment(audioUrl, startMs, endMs, { onStart, onEnd, onError })

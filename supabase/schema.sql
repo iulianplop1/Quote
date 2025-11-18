@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS quotes (
   character TEXT NOT NULL,
   quote TEXT NOT NULL,
   significance INTEGER DEFAULT 5 CHECK (significance >= 1 AND significance <= 10),
+  start_time INTEGER, -- Start time in milliseconds from subtitle file
+  end_time INTEGER, -- End time in milliseconds from subtitle file
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -93,6 +95,28 @@ DROP POLICY IF EXISTS "Users can insert quotes for their movies" ON quotes;
 CREATE POLICY "Users can insert quotes for their movies"
   ON quotes FOR INSERT
   WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM movies
+      WHERE movies.id = quotes.movie_id
+      AND movies.user_id = auth.uid()
+    )
+  );
+
+DROP POLICY IF EXISTS "Users can update quotes from their movies" ON quotes;
+CREATE POLICY "Users can update quotes from their movies"
+  ON quotes FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1 FROM movies
+      WHERE movies.id = quotes.movie_id
+      AND movies.user_id = auth.uid()
+    )
+  );
+
+DROP POLICY IF EXISTS "Users can delete quotes from their movies" ON quotes;
+CREATE POLICY "Users can delete quotes from their movies"
+  ON quotes FOR DELETE
+  USING (
     EXISTS (
       SELECT 1 FROM movies
       WHERE movies.id = quotes.movie_id
