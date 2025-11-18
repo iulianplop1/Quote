@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { Plus, Trash2, Clock, Music, Film, Play, Pause, X, Loader2, Calendar } from 'lucide-react'
-import { createLocalAudioUrl, isLocalAudioContent, getLocalAudioContent } from '../lib/mediaConfig'
 import { speakQuote, stopSpeaking, isSpeaking, pauseSpeaking, resumeSpeaking, initializeSpeechSynthesis } from '../lib/textToSpeech'
 import { playOriginalQuoteSegment } from '../lib/originalAudio'
 import { getMovieMediaConfigPersisted } from '../lib/mediaConfig'
+import { buildStoragePath, deleteFileFromBucket, uploadFileToBucket } from '../lib/storage'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
@@ -16,6 +16,7 @@ export default function Routines() {
   const [playingRoutineId, setPlayingRoutineId] = useState(null)
   const [isPaused, setIsPaused] = useState(false)
   const routineAudioRef = useRef(null)
+  const songResolveRef = useRef(null)
   const routineQuotesRef = useRef([])
   const currentQuoteIndexRef = useRef(0)
   const stopPlaybackRef = useRef(null)
@@ -182,7 +183,7 @@ export default function Routines() {
       return
     }
 
-    if (!songFile && !songFileName) {
+    if (!songFile) {
       alert('Please upload a song')
       return
     }
@@ -196,57 +197,15 @@ export default function Routines() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
 
-      // Store audio file in IndexedDB
-      let audioUrl = ''
+      let uploadedSong = null
       if (songFile) {
-        audioUrl = createLocalAudioUrl('blob-stored')
-        const storageKey = `routine-song-${Date.now()}`
-        
-        try {
-          const db = await new Promise((resolve, reject) => {
-            const request = indexedDB.open('QuoteAppDB', 2) // Increment version to trigger upgrade
-            request.onerror = () => reject(request.error)
-            request.onsuccess = () => resolve(request.result)
-            request.onupgradeneeded = (event) => {
-              const db = event.target.result
-              // Create routine-songs store if it doesn't exist
-              if (!db.objectStoreNames.contains('routine-songs')) {
-                db.createObjectStore('routine-songs')
-              }
-              // Also ensure movie-audio-files exists (for compatibility)
-              if (!db.objectStoreNames.contains('movie-audio-files')) {
-                db.createObjectStore('movie-audio-files')
-              }
-            }
-          })
-          
-          await new Promise((resolve, reject) => {
-            const transaction = db.transaction(['routine-songs'], 'readwrite')
-            const store = transaction.objectStore('routine-songs')
-            const request = store.put(songFile, storageKey)
-            request.onsuccess = () => {
-              console.log(`[Routine] Successfully stored song in IndexedDB, key: ${storageKey}`)
-              resolve()
-            }
-            request.onerror = () => {
-              console.error('[Routine] IndexedDB put error:', request.error)
-              reject(request.error)
-            }
-          })
-          
-          localStorage.setItem(storageKey + '-idb', 'true')
-          localStorage.setItem(storageKey + '-type', songFile.type || 'audio/mpeg')
-          localStorage.setItem(storageKey + '-url', audioUrl)
-          console.log(`[Routine] Stored song metadata in localStorage for key: ${storageKey}`)
-        } catch (error) {
-          console.error('[Routine] Error storing audio file:', error)
-          console.error('[Routine] Error details:', {
-            name: error.name,
-            message: error.message,
-            stack: error.stack
-          })
-          throw new Error(`Failed to store audio file: ${error.message}`)
-        }
+        const filePath = buildStoragePath([
+          'users',
+          user.id,
+          'routines',
+          `${Date.now()}-${songFile.name}`,
+        ])
+        uploadedSong = await uploadFileToBucket({ path: filePath, file: songFile })
       }
 
       // Insert routine
@@ -255,8 +214,9 @@ export default function Routines() {
         .insert({
           user_id: user.id,
           name: routineName,
-          song_audio_url: audioUrl,
+          song_audio_url: uploadedSong?.publicUrl || '',
           song_audio_filename: songFile?.name || songFileName,
+          song_storage_path: uploadedSong?.path || null,
           scheduled_time: scheduledTime,
           enabled: true,
           days_of_week: selectedDays,
@@ -301,12 +261,20 @@ export default function Routines() {
     }
 
     try {
+      const routineToDelete = routines.find((r) => r.id === routineId)
       const { error } = await supabase
         .from('routines')
         .delete()
         .eq('id', routineId)
 
       if (error) throw error
+      if (routineToDelete?.song_storage_path) {
+        try {
+          await deleteFileFromBucket(routineToDelete.song_storage_path)
+        } catch (storageError) {
+          console.warn('Failed to delete routine song from storage:', storageError.message)
+        }
+      }
       loadRoutines()
     } catch (error) {
       console.error('Error deleting routine:', error)
@@ -347,13 +315,11 @@ export default function Routines() {
       return
     }
 
-    // Stop any currently playing routine
     stopRoutine()
 
     setPlayingRoutineId(routine.id)
     setIsPaused(false)
 
-    // Set up Media Session API for better Android control
     if ('mediaSession' in navigator) {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: routine.name,
@@ -383,62 +349,6 @@ export default function Routines() {
     }
 
     try {
-      // Step 1: Play song
-      if (routine.song_audio_url) {
-        const audioUrl = routine.song_audio_url
-        let audioSrc = audioUrl
-
-        if (isLocalAudioContent(audioUrl)) {
-          const content = getLocalAudioContent(audioUrl)
-          if (content && content !== 'stored') {
-            // Find the stored blob
-            const storageKeys = Object.keys(localStorage).filter(key => 
-              key.endsWith('-url') && localStorage.getItem(key) === audioUrl
-            )
-            
-            if (storageKeys.length > 0) {
-              const storageKey = storageKeys[0].replace('-url', '')
-              const db = await new Promise((resolve, reject) => {
-                const request = indexedDB.open('QuoteAppDB', 2) // Use version 2
-                request.onerror = () => reject(request.error)
-                request.onsuccess = () => resolve(request.result)
-                request.onupgradeneeded = (event) => {
-                  const db = event.target.result
-                  if (!db.objectStoreNames.contains('routine-songs')) {
-                    db.createObjectStore('routine-songs')
-                  }
-                  if (!db.objectStoreNames.contains('movie-audio-files')) {
-                    db.createObjectStore('movie-audio-files')
-                  }
-                }
-              })
-              
-              const blob = await new Promise((resolve, reject) => {
-                const transaction = db.transaction(['routine-songs'], 'readonly')
-                const store = transaction.objectStore('routine-songs')
-                const request = store.get(storageKey)
-                request.onsuccess = () => resolve(request.result)
-                request.onerror = () => reject(request.error)
-              })
-              
-              if (blob) {
-                audioSrc = URL.createObjectURL(blob)
-              }
-            }
-          }
-        }
-
-        const audio = new Audio(audioSrc)
-        routineAudioRef.current = audio
-
-        await new Promise((resolve, reject) => {
-          audio.onended = resolve
-          audio.onerror = reject
-          audio.play().catch(reject)
-        })
-      }
-
-      // Step 2: Play quotes from selected movies
       const movieIds = routine.routine_movies?.map(rm => rm.movie_id) || []
       const allQuotes = []
 
@@ -456,10 +366,22 @@ export default function Routines() {
         }
       }
 
+      routineQuotesRef.current = allQuotes
+      currentQuoteIndexRef.current = 0
+
       if (allQuotes.length > 0) {
-        routineQuotesRef.current = allQuotes
-        currentQuoteIndexRef.current = 0
-        await playNextQuote(routine.id, allQuotes, 0)
+        await playQuotesSequentially(routine, allQuotes)
+      }
+
+      if (playingRoutineId !== routine.id) {
+        return
+      }
+
+      await playRoutineSong(routine)
+
+      if (playingRoutineId === routine.id) {
+        setPlayingRoutineId(null)
+        setIsPaused(false)
       }
     } catch (error) {
       console.error('Error playing routine:', error)
@@ -469,66 +391,120 @@ export default function Routines() {
     }
   }
 
-  const playNextQuote = async (routineId, quotes, index) => {
-    if (index >= quotes.length || playingRoutineId !== routineId) {
-      setPlayingRoutineId(null)
-      setIsPaused(false)
+  const playRoutineSong = async (routine) => {
+    if (!routine.song_audio_url || playingRoutineId !== routine.id) {
       return
     }
 
-    const quote = quotes[index]
-    const quoteText = `"${quote.quote}"${quote.character ? ` by ${quote.character}` : ''}`
+    await new Promise((resolve, reject) => {
+      const audio = new Audio(routine.song_audio_url)
+      routineAudioRef.current = audio
 
-    try {
-      // Try to get movie media config for original audio
-      const { data: movie } = await supabase
-        .from('movies')
-        .select('id')
-        .eq('id', quote.movie_id)
-        .single()
+      const finalize = () => {
+        routineAudioRef.current = null
+        songResolveRef.current = null
+        resolve()
+      }
 
-      if (movie) {
-        const cfg = await getMovieMediaConfigPersisted(movie.id)
+      songResolveRef.current = finalize
+
+      audio.onended = finalize
+      audio.onerror = (event) => {
+        routineAudioRef.current = null
+        songResolveRef.current = null
+        reject(new Error('Error playing routine song. Please re-upload the file.'))
+      }
+
+      audio.play().catch((err) => {
+        routineAudioRef.current = null
+        songResolveRef.current = null
+        reject(err)
+      })
+    })
+  }
+
+  const playQuotesSequentially = async (routine, quotes) => {
+    for (let index = 0; index < quotes.length; index++) {
+      if (playingRoutineId !== routine.id) {
+        return
+      }
+      currentQuoteIndexRef.current = index + 1
+      await playQuoteForRoutine(routine.id, quotes[index])
+    }
+  }
+
+  const playQuoteForRoutine = (routineId, quote) => {
+    return new Promise(async (resolve) => {
+      let finished = false
+      const finish = () => {
+        if (finished) return
+        finished = true
+        stopPlaybackRef.current = null
+        resolve()
+      }
+
+      if (playingRoutineId !== routineId) {
+        finish()
+        return
+      }
+
+      const quoteText = `"${quote.quote}"${quote.character ? ` by ${quote.character}` : ''}`
+
+      const fallbackToTTS = () => {
+        if (playingRoutineId !== routineId) {
+          finish()
+          return
+        }
+        stopPlaybackRef.current = () => {
+          finish()
+        }
+        speakQuote(quoteText, () => finish())
+      }
+
+      try {
+        const cfg = await getMovieMediaConfigPersisted(quote.movie_id)
         if (cfg.audioUrl && cfg.srtUrl) {
           const stopPlayback = await playOriginalQuoteSegment(quoteText, cfg.audioUrl, cfg.srtUrl, {
             subtitleOffset: cfg.subtitleOffset || 0,
             startTime: quote.start_time || null,
             endTime: quote.end_time || null,
-            onEnd: () => {
-              playNextQuote(routineId, quotes, index + 1)
-            },
+            onEnd: finish,
             onError: () => {
-              // Fallback to TTS
-              speakQuote(quoteText, () => {
-                playNextQuote(routineId, quotes, index + 1)
-              })
+              fallbackToTTS()
             }
           })
-          stopPlaybackRef.current = stopPlayback
+          stopPlaybackRef.current = () => {
+            try {
+              stopPlayback()
+            } catch (e) {
+              console.warn('Error stopping routine audio:', e)
+            } finally {
+              finish()
+            }
+          }
           return
         }
+      } catch (error) {
+        console.warn('Error preparing original audio for routine:', error)
       }
 
-      // Fallback to TTS
-      speakQuote(quoteText, () => {
-        playNextQuote(routineId, quotes, index + 1)
-      })
-    } catch (error) {
-      console.error('Error playing quote:', error)
-      // Continue to next quote
-      playNextQuote(routineId, quotes, index + 1)
-    }
+      fallbackToTTS()
+    })
   }
 
   const stopRoutine = () => {
     stopSpeaking()
     if (routineAudioRef.current) {
       routineAudioRef.current.pause()
-      routineAudioRef.current = null
     }
     if (stopPlaybackRef.current) {
       stopPlaybackRef.current()
       stopPlaybackRef.current = null
+    }
+    if (songResolveRef.current) {
+      songResolveRef.current()
+    } else {
+      routineAudioRef.current = null
     }
     setPlayingRoutineId(null)
     setIsPaused(false)

@@ -25,7 +25,7 @@ import {
   isElevenLabsAvailable,
 } from '../lib/textToSpeech'
 import { playOriginalQuoteSegment } from '../lib/originalAudio'
-import { getMovieMediaConfigPersisted, setMovieMediaConfigPersisted, isLocalSrtContent, createLocalSrtUrl, getLocalSrtContent, isLocalAudioContent, createLocalAudioUrl, getLocalAudioContent } from '../lib/mediaConfig'
+import { getMovieMediaConfigPersisted, setMovieMediaConfigPersisted } from '../lib/mediaConfig'
 
 const SUBTITLE_OFFSET_MIN = -600000 // -10 minutes in milliseconds
 const SUBTITLE_OFFSET_MAX = 600000 // +10 minutes in milliseconds
@@ -68,9 +68,12 @@ export default function Library() {
   const [browserVoices, setBrowserVoices] = useState([])
   const [loadingVoices, setLoadingVoices] = useState(false)
   const [showMediaSettings, setShowMediaSettings] = useState(false)
-  const [mediaConfig, setMediaConfig] = useState({ videoUrl: '', audioUrl: '', srtUrl: '', subtitleOffset: 0 })
+  const [mediaConfig, setMediaConfig] = useState({ audioUrl: '', srtUrl: '', subtitleOffset: 0 })
   const [srtFileName, setSrtFileName] = useState('')
   const [audioFileName, setAudioFileName] = useState('')
+  const [pendingAudioFile, setPendingAudioFile] = useState(null)
+  const [pendingSrtFile, setPendingSrtFile] = useState(null)
+  const [savingMediaConfig, setSavingMediaConfig] = useState(false)
   const originalAudioStopRef = useRef(null)
 
   useEffect(() => {
@@ -390,20 +393,14 @@ export default function Library() {
       console.log(`Successfully saved ${quotesToInsert.length} quotes to database`)
 
       // If adding from subtitle file, automatically save the SRT file to media config
-      if (addMethod === 'subtitle' && srtText) {
+      if (addMethod === 'subtitle' && subtitleFile) {
         try {
-          console.log(`[Auto-save SRT] Saving SRT file for movie ${movie.id}, length: ${srtText.length}`)
-          const srtUrl = createLocalSrtUrl(srtText)
           await setMovieMediaConfigPersisted(movie.id, {
-            videoUrl: '',
-            audioUrl: '', // User will need to upload audio separately
-            srtUrl: srtUrl
+            srtFile: subtitleFile,
           })
-          localStorage.setItem(`movie-srt-filename-${movie.id}`, subtitleFile.name)
-          console.log(`[Auto-save SRT] Successfully saved SRT file "${subtitleFile.name}" for movie ${movie.id}`)
+          console.log(`[Auto-save SRT] Uploaded subtitle file "${subtitleFile.name}" for movie ${movie.id}`)
         } catch (error) {
           console.error('[Auto-save SRT] Error saving SRT file automatically:', error)
-          // Don't throw - this is not critical
         }
       }
 
@@ -485,14 +482,15 @@ export default function Library() {
     
     // Load media config for this movie
     const cfg = await getMovieMediaConfigPersisted(movie.id)
-    setMediaConfig({ ...cfg, subtitleOffset: cfg.subtitleOffset || 0 })
-    // Try to get filename from localStorage if available
-    if (isLocalSrtContent(cfg.srtUrl)) {
-      const storedFileName = localStorage.getItem(`movie-srt-filename-${movie.id}`)
-      setSrtFileName(storedFileName || 'Uploaded file')
-    } else {
-      setSrtFileName('')
-    }
+    setMediaConfig({
+      audioUrl: cfg.audioUrl || '',
+      srtUrl: cfg.srtUrl || '',
+      subtitleOffset: cfg.subtitleOffset || 0,
+    })
+    setAudioFileName(cfg.audioFileName || '')
+    setSrtFileName(cfg.srtFileName || '')
+    setPendingAudioFile(null)
+    setPendingSrtFile(null)
     setShowMediaSettings(false)
     
     setSelectedMovie(movie)
@@ -512,6 +510,36 @@ export default function Library() {
       alert('Error loading quotes: ' + error.message)
     } finally {
       setLoadingQuotes(false)
+    }
+  }
+
+  const handleSaveMediaSettings = async () => {
+    if (!selectedMovie) return
+    setSavingMediaConfig(true)
+    try {
+      const updated = await setMovieMediaConfigPersisted(selectedMovie.id, {
+        audioFile: pendingAudioFile || undefined,
+        srtFile: pendingSrtFile || undefined,
+        subtitleOffset: mediaConfig.subtitleOffset || 0,
+      })
+
+      setMediaConfig({
+        audioUrl: updated.audioUrl || '',
+        srtUrl: updated.srtUrl || '',
+        subtitleOffset: updated.subtitleOffset || 0,
+      })
+
+      setAudioFileName(updated.audioFileName || pendingAudioFile?.name || audioFileName)
+      setSrtFileName(updated.srtFileName || pendingSrtFile?.name || srtFileName)
+      setPendingAudioFile(null)
+      setPendingSrtFile(null)
+      setShowMediaSettings(false)
+      alert('Media configuration saved successfully!')
+    } catch (error) {
+      console.error('Error saving media config:', error)
+      alert('Error saving configuration: ' + error.message)
+    } finally {
+      setSavingMediaConfig(false)
     }
   }
 
@@ -686,7 +714,13 @@ export default function Library() {
                   <Settings size={18} />
                 </button>
                 <button
-                  onClick={() => setShowMediaSettings(!showMediaSettings)}
+                  onClick={() => {
+                    if (!showMediaSettings) {
+                      setPendingAudioFile(null)
+                      setPendingSrtFile(null)
+                    }
+                    setShowMediaSettings(!showMediaSettings)
+                  }}
                   className="btn-secondary flex items-center space-x-2"
                   title="Edit Video & Subtitle URLs"
                 >
@@ -703,9 +737,11 @@ export default function Library() {
                     setIsPlayingAll(false)
                     setCurrentQueueIndex(0)
                     setShowMediaSettings(false)
-                    setMediaConfig({ videoUrl: '', audioUrl: '', srtUrl: '' })
+                    setMediaConfig({ audioUrl: '', srtUrl: '', subtitleOffset: 0 })
                     setSrtFileName('')
                     setAudioFileName('')
+                    setPendingAudioFile(null)
+                    setPendingSrtFile(null)
                   }}
                   className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
                 >
@@ -800,119 +836,53 @@ export default function Library() {
               <div className="mb-4 p-4 bg-slate-50 dark:bg-slate-700 rounded-lg border border-slate-200 dark:border-slate-600 space-y-4">
                 <h3 className="font-semibold text-slate-900 dark:text-slate-100">Audio & Subtitle Files</h3>
                 <p className="text-sm text-slate-600 dark:text-slate-400">
-                  Upload an audio file and subtitle file. When you click a quote, the app will find the timestamps in the subtitle file and play the matching audio segment.
+                  Files are uploaded to Supabase Storage so the same routines work on every device.
                 </p>
-                
+
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                     Audio File
                   </label>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
-                    Upload an audio file. The app will play the audio segment matching the quote timestamps from the subtitle file.
+                    Upload a clean movie audio track (.mp3, .wav, .ogg, .m4a, .aac). Max size ~200MB.
                   </p>
-                  <div className="space-y-2 mb-2">
-                      <input
-                        type="file"
-                        accept=".mp3,.wav,.ogg,.m4a,.aac"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0]
-                          if (!file) return
-                          
-                          // Check file size (warn if > 10MB, but allow up to 175MB)
-                          const maxRecommendedSize = 10 * 1024 * 1024 // 10MB
-                          const maxSize = 175 * 1024 * 1024 // 175MB
-                            if (file.size > maxSize) {
-                              alert(`File is too large (${(file.size / 1024 / 1024).toFixed(2)}MB). Maximum size is ${(maxSize / 1024 / 1024).toFixed(0)}MB. Please use a smaller file.`)
-                              return
-                            }
-                          if (file.size > maxRecommendedSize) {
-                            const proceed = confirm(
-                              `Warning: This file is large (${(file.size / 1024 / 1024).toFixed(2)}MB). ` +
-                              `Large files may take longer to process and use more storage. Continue?`
-                            )
-                            if (!proceed) return
-                          }
-                          
-                          try {
-                            // Store file as Blob directly - more efficient than base64
-                            // Create a marker URL that indicates the blob is stored in IndexedDB
-                            const audioUrl = createLocalAudioUrl('blob-stored')
-                            console.log('Audio file uploaded, size:', file.size, 'bytes, type:', file.type)
-                            
-                            // Store the blob directly in IndexedDB immediately
-                            if (selectedMovie) {
-                              const storageKey = `movie-audio-content-${selectedMovie.id}`
-                              try {
-                                // Store blob directly in IndexedDB
-                                const db = await new Promise((resolve, reject) => {
-                                  const request = indexedDB.open('QuoteAppDB', 2) // Use version 2
-                                  request.onerror = () => reject(request.error)
-                                  request.onsuccess = () => resolve(request.result)
-                                  request.onupgradeneeded = (event) => {
-                                    const db = event.target.result
-                                    if (!db.objectStoreNames.contains('movie-audio-files')) {
-                                      db.createObjectStore('movie-audio-files')
-                                    }
-                                    if (!db.objectStoreNames.contains('routine-songs')) {
-                                      db.createObjectStore('routine-songs')
-                                    }
-                                  }
-                                })
-                                
-                                await new Promise((resolve, reject) => {
-                                  const transaction = db.transaction(['movie-audio-files'], 'readwrite')
-                                  const store = transaction.objectStore('movie-audio-files')
-                                  const request = store.put(file, storageKey)
-                                  request.onsuccess = () => resolve()
-                                  request.onerror = () => reject(request.error)
-                                })
-                                
-                                // Mark as stored in IndexedDB
-                                localStorage.setItem(storageKey + '-idb', 'true')
-                                localStorage.setItem(storageKey + '-type', file.type || 'audio/mpeg')
-                                console.log('Audio blob stored in IndexedDB, key:', storageKey)
-                              } catch (storageError) {
-                                console.error('Error storing audio blob:', storageError)
-                                alert('Error storing audio file: ' + storageError.message)
-                                return
-                              }
-                              
-                              localStorage.setItem(`movie-audio-filename-${selectedMovie.id}`, file.name)
-                            }
-                            
-                            setMediaConfig({ ...mediaConfig, audioUrl })
-                            setAudioFileName(file.name)
-                          } catch (error) {
-                            console.error('Error reading audio file:', error)
-                            if (error.name === 'QuotaExceededError') {
-                              alert('Error: The audio file is too large to store. Please use a smaller file.')
-                            } else {
-                              alert('Error reading audio file: ' + error.message)
-                            }
-                          }
-                        }}
-                        className="input-field"
-                      />
-                      {audioFileName && (
-                        <p className="text-sm text-slate-600 dark:text-slate-400">
-                          Selected: {audioFileName}
-                        </p>
-                      )}
-                      {isLocalAudioContent(mediaConfig.audioUrl) && !audioFileName && (
-                        <p className="text-sm text-green-600 dark:text-green-400">
-                          ✓ Audio file already uploaded
-                        </p>
-                      )}
-                    </div>
+                  <input
+                    type="file"
+                    accept=".mp3,.wav,.ogg,.m4a,.aac"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      if (!file) return
+
+                      const maxSize = 200 * 1024 * 1024
+                      if (file.size > maxSize) {
+                        alert(`File is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Please choose a file under 200MB.`)
+                        return
+                      }
+                      setPendingAudioFile(file)
+                    }}
+                    className="input-field"
+                  />
+                  {pendingAudioFile ? (
+                    <p className="text-sm text-primary-600 dark:text-primary-400 mt-2">
+                      Pending upload: {pendingAudioFile.name} ({(pendingAudioFile.size / 1024 / 1024).toFixed(1)}MB)
+                    </p>
+                  ) : audioFileName ? (
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mt-2">
+                      Current file: {audioFileName}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-yellow-600 dark:text-yellow-400 mt-2">
+                      No audio uploaded yet
+                    </p>
+                  )}
                 </div>
 
-                {/* Subtitle Timing Offset */}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                     Subtitle Timing Offset
                   </label>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
-                    Adjust if subtitles don't match the audio timing. Positive values shift forward, negative shifts backward.
+                    Adjust this if the spoken lines do not perfectly match the subtitles. Positive values delay the clip; negative values start earlier.
                   </p>
                   <div className="flex items-center space-x-4">
                     <input
@@ -921,7 +891,7 @@ export default function Library() {
                       max={SUBTITLE_OFFSET_MAX}
                       step={SUBTITLE_OFFSET_STEP}
                       value={mediaConfig.subtitleOffset || 0}
-                      onChange={(e) => setMediaConfig({ ...mediaConfig, subtitleOffset: parseInt(e.target.value) || 0 })}
+                      onChange={(e) => setMediaConfig({ ...mediaConfig, subtitleOffset: parseInt(e.target.value, 10) || 0 })}
                       className="flex-1"
                     />
                     <div className="w-24 text-right">
@@ -959,7 +929,7 @@ export default function Library() {
                           )
                           setMediaConfig({
                             ...mediaConfig,
-                            subtitleOffset: Math.round(clampedSeconds * 1000)
+                            subtitleOffset: Math.round(clampedSeconds * 1000),
                           })
                         }}
                         className="input-field"
@@ -996,172 +966,57 @@ export default function Library() {
                     Subtitle File
                   </label>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
-                    Upload an SRT subtitle file. The app will find the quote timestamps in this file.
+                    Upload an SRT file. We use it to find the exact timestamps for each quote.
                   </p>
-                  <div className="space-y-2">
-                      <input
-                        type="file"
-                        accept=".srt,.txt"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0]
-                          if (!file) return
-                          
-                          try {
-                            // Check file extension
-                            const fileName = file.name.toLowerCase()
-                            const isAudioFile = fileName.endsWith('.mp3') || fileName.endsWith('.wav') || 
-                                                fileName.endsWith('.ogg') || fileName.endsWith('.m4a') || 
-                                                fileName.endsWith('.aac') || fileName.endsWith('.flac')
-                            
-                            if (isAudioFile) {
-                              alert('Error: You selected an audio file. Please select a subtitle file (.srt or .txt format).\n\nTo upload audio, use the "Audio Source" section above.')
-                              return
-                            }
-                            
-                            // Read first few bytes to check for binary file signatures
-                            const arrayBuffer = await file.arrayBuffer()
-                            const uint8Array = new Uint8Array(arrayBuffer.slice(0, 10))
-                            
-                            // Check for common binary file signatures
-                            // ID3 (MP3): 49 44 33 (ASCII "ID3")
-                            if (uint8Array[0] === 0x49 && uint8Array[1] === 0x44 && uint8Array[2] === 0x33) {
-                              alert('Error: This appears to be an MP3 audio file, not a subtitle file.\n\nPlease select a valid SRT subtitle file (.srt format).\n\nTo upload audio, use the "Audio Source" section above.')
-                              return
-                            }
-                            
-                            // Check for other binary formats
-                            const isBinary = uint8Array.some(byte => byte === 0 && uint8Array.indexOf(byte) < 5)
-                            if (isBinary && !fileName.endsWith('.srt') && !fileName.endsWith('.txt')) {
-                              alert('Error: This appears to be a binary file, not a text-based subtitle file.\n\nPlease select a valid SRT subtitle file (.srt format).')
-                              return
-                            }
-                            
-                            const content = await file.text()
-                            
-                            // Validate SRT content
-                            if (!content || !content.trim()) {
-                              alert('The subtitle file appears to be empty. Please select a valid SRT file.')
-                              return
-                            }
-                            
-                            // Quick validation - check if it looks like an SRT file
-                            const hasTimestamp = /(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})/.test(content)
-                            if (!hasTimestamp) {
-                              const confirm = window.confirm(
-                                'Warning: The file does not appear to contain SRT timestamp format (HH:MM:SS,mmm --> HH:MM:SS,mmm).\n\n' +
-                                'The file may not be a valid SRT subtitle file. Do you want to continue anyway?'
-                              )
-                              if (!confirm) return
-                            }
-                            
-                            console.log('SRT file uploaded, content length:', content.length, 'first 100 chars:', content.substring(0, 100))
-                            
-                            // Validate content is actually there
-                            if (!content || content.trim().length < 10) {
-                              alert('Error: The subtitle file appears to be empty or too small. Please select a valid SRT file.')
-                              return
-                            }
-                            
-                            const srtUrl = createLocalSrtUrl(content)
-                            console.log('Created SRT URL, length:', srtUrl.length)
-                            setMediaConfig({ ...mediaConfig, srtUrl })
-                            setSrtFileName(file.name)
-                            // Store filename for later reference
-                            if (selectedMovie) {
-                              localStorage.setItem(`movie-srt-filename-${selectedMovie.id}`, file.name)
-                            }
-                          } catch (error) {
-                            console.error('Error reading file:', error)
-                            alert('Error reading subtitle file: ' + error.message)
-                          }
-                        }}
-                        className="input-field"
-                      />
-                      {srtFileName && (
-                        <p className="text-sm text-slate-600 dark:text-slate-400">
-                          Selected: {srtFileName}
-                        </p>
-                      )}
-                      {isLocalSrtContent(mediaConfig.srtUrl) && !srtFileName && (
-                        <p className="text-sm text-green-600 dark:text-green-400">
-                          ✓ Subtitle file already uploaded
-                        </p>
-                      )}
-                    </div>
+                  <input
+                    type="file"
+                    accept=".srt,.txt"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0]
+                      if (!file) return
+
+                      const fileName = file.name.toLowerCase()
+                      const looksLikeAudio = ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac'].some((ext) => fileName.endsWith(ext))
+                      if (looksLikeAudio) {
+                        alert('Please upload a subtitle file (.srt).')
+                        return
+                      }
+
+                      setPendingSrtFile(file)
+                    }}
+                    className="input-field"
+                  />
+                  {pendingSrtFile ? (
+                    <p className="text-sm text-primary-600 dark:text-primary-400 mt-2">
+                      Pending upload: {pendingSrtFile.name}
+                    </p>
+                  ) : srtFileName ? (
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mt-2">
+                      Current file: {srtFileName}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-yellow-600 dark:text-yellow-400 mt-2">
+                      No subtitles uploaded yet
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex gap-2">
                   <button
-                    onClick={async () => {
-                      if (!mediaConfig.audioUrl) {
-                        alert('Please upload an audio file')
-                        return
-                      }
-                      if (!mediaConfig.srtUrl) {
-                        alert('Please upload a subtitle file')
-                        return
-                      }
-                      try {
-                        console.log('Saving media config:', {
-                          audioUrl: mediaConfig.audioUrl ? (mediaConfig.audioUrl.substring(0, 50) + '...') : 'empty',
-                          srtUrl: mediaConfig.srtUrl ? (mediaConfig.srtUrl.substring(0, 50) + '...') : 'empty',
-                          isLocalAudio: isLocalAudioContent(mediaConfig.audioUrl),
-                          isLocalSrt: isLocalSrtContent(mediaConfig.srtUrl)
-                        })
-                        
-                        // Validate that we have actual content, not just markers
-                        if (isLocalAudioContent(mediaConfig.audioUrl)) {
-                          const audioContent = getLocalAudioContent(mediaConfig.audioUrl)
-                          if (!audioContent || audioContent === 'stored' || audioContent.trim() === '') {
-                            alert('Error: Audio file content is missing. Please re-upload your audio file.')
-                            return
-                          }
-                          console.log('Audio content length:', audioContent.length)
-                        }
-                        
-                        if (isLocalSrtContent(mediaConfig.srtUrl)) {
-                          const srtContent = getLocalSrtContent(mediaConfig.srtUrl)
-                          if (!srtContent || srtContent === 'stored' || srtContent.trim() === '') {
-                            alert('Error: Subtitle file content is missing. Please re-upload your subtitle file.')
-                            return
-                          }
-                          console.log('SRT content length:', srtContent.length)
-                        }
-                        
-                        await setMovieMediaConfigPersisted(selectedMovie.id, {
-                          videoUrl: '', // No longer used
-                          audioUrl: isLocalAudioContent(mediaConfig.audioUrl)
-                            ? mediaConfig.audioUrl
-                            : '',
-                          srtUrl: isLocalSrtContent(mediaConfig.srtUrl) 
-                            ? mediaConfig.srtUrl 
-                            : ''
-                        })
-                        
-                        // Save subtitle offset
-                        const LS_PREFIX = 'movie-media-'
-                        const raw = localStorage.getItem(LS_PREFIX + selectedMovie.id)
-                        const cfg = raw ? JSON.parse(raw) : {}
-                        cfg.subtitleOffset = mediaConfig.subtitleOffset || 0
-                        localStorage.setItem(LS_PREFIX + selectedMovie.id, JSON.stringify(cfg))
-                        alert('Media configuration saved successfully!')
-                        setShowMediaSettings(false)
-                      } catch (error) {
-                        console.error('Error saving media config:', error)
-                        if (error.name === 'QuotaExceededError') {
-                          alert('Error: The audio file is too large to store locally. Please use a smaller file or provide an audio URL instead.')
-                        } else {
-                          alert('Error saving configuration: ' + error.message)
-                        }
-                      }
-                    }}
-                    className="btn-primary"
+                    onClick={handleSaveMediaSettings}
+                    className="btn-primary flex-1"
+                    disabled={savingMediaConfig}
                   >
-                    Save Configuration
+                    {savingMediaConfig ? 'Saving...' : 'Save Configuration'}
                   </button>
                   <button
-                    onClick={() => setShowMediaSettings(false)}
-                    className="btn-secondary"
+                    onClick={() => {
+                      setShowMediaSettings(false)
+                      setPendingAudioFile(null)
+                      setPendingSrtFile(null)
+                    }}
+                    className="btn-secondary flex-1"
+                    disabled={savingMediaConfig}
                   >
                     Cancel
                   </button>
@@ -1235,8 +1090,8 @@ export default function Library() {
                                   console.log('Media config loaded:', { 
                                     hasAudio: !!cfg.audioUrl, 
                                     hasSrt: !!cfg.srtUrl,
-                                    audioType: cfg.audioUrl ? (cfg.audioUrl.startsWith('data:local-audio:') ? 'local' : 'url') : 'none',
-                                    srtType: cfg.srtUrl ? (cfg.srtUrl.startsWith('data:local-srt:') ? 'local' : 'url') : 'none'
+                                    audioSource: cfg.audioUrl ? 'cloud' : 'none',
+                                    subtitleSource: cfg.srtUrl ? 'cloud' : 'none'
                                   })
                                   
                                   const audioUrl = cfg.audioUrl
@@ -1270,8 +1125,8 @@ export default function Library() {
                                   console.log('Media config:', {
                                     hasAudio: !!audioUrl,
                                     hasSrt: !!srtUrl,
-                                    audioType: audioUrl ? (audioUrl.startsWith('data:local-audio:') ? 'local' : 'url') : 'none',
-                                    srtType: srtUrl ? (srtUrl.startsWith('data:local-srt:') ? 'local' : 'url') : 'none',
+                                    audioSource: audioUrl ? 'cloud' : 'none',
+                                    subtitleSource: srtUrl ? 'cloud' : 'none',
                                     subtitleOffset: mediaConfig.subtitleOffset || 0
                                   })
                                   console.log('Using stored timestamps:', !!(quote.start_time && quote.end_time))

@@ -26,6 +26,23 @@ CREATE TABLE IF NOT EXISTS quotes (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Movie media configuration table (stores cloud file references)
+CREATE TABLE IF NOT EXISTS movie_media_configs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  movie_id UUID NOT NULL REFERENCES movies(id) ON DELETE CASCADE UNIQUE,
+  audio_storage_path TEXT,
+  audio_url TEXT,
+  audio_file_name TEXT,
+  audio_mime_type TEXT,
+  srt_storage_path TEXT,
+  srt_url TEXT,
+  srt_file_name TEXT,
+  subtitle_offset INTEGER DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Daily quotes table (tracks which quotes were shown on which days)
 CREATE TABLE IF NOT EXISTS daily_quotes (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -49,12 +66,14 @@ CREATE TABLE IF NOT EXISTS user_settings (
 CREATE INDEX IF NOT EXISTS idx_movies_user_id ON movies(user_id);
 CREATE INDEX IF NOT EXISTS idx_quotes_movie_id ON quotes(movie_id);
 CREATE INDEX IF NOT EXISTS idx_quotes_significance ON quotes(significance);
+CREATE INDEX IF NOT EXISTS idx_movie_media_movie_id ON movie_media_configs(movie_id);
 CREATE INDEX IF NOT EXISTS idx_daily_quotes_user_date ON daily_quotes(user_id, date);
 CREATE INDEX IF NOT EXISTS idx_daily_quotes_quote_id ON daily_quotes(quote_id);
 
 -- Enable Row Level Security (RLS)
 ALTER TABLE movies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE quotes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE movie_media_configs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE daily_quotes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_settings ENABLE ROW LEVEL SECURITY;
 
@@ -124,6 +143,27 @@ CREATE POLICY "Users can delete quotes from their movies"
     )
   );
 
+-- RLS Policies for movie_media_configs
+DROP POLICY IF EXISTS "Users can view their own movie media configs" ON movie_media_configs;
+CREATE POLICY "Users can view their own movie media configs"
+  ON movie_media_configs FOR SELECT
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert their own movie media configs" ON movie_media_configs;
+CREATE POLICY "Users can insert their own movie media configs"
+  ON movie_media_configs FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update their own movie media configs" ON movie_media_configs;
+CREATE POLICY "Users can update their own movie media configs"
+  ON movie_media_configs FOR UPDATE
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can delete their own movie media configs" ON movie_media_configs;
+CREATE POLICY "Users can delete their own movie media configs"
+  ON movie_media_configs FOR DELETE
+  USING (auth.uid() = user_id);
+
 -- RLS Policies for daily_quotes
 DROP POLICY IF EXISTS "Users can view their own daily quotes" ON daily_quotes;
 CREATE POLICY "Users can view their own daily quotes"
@@ -165,6 +205,10 @@ DROP TRIGGER IF EXISTS update_movies_updated_at ON movies;
 CREATE TRIGGER update_movies_updated_at BEFORE UPDATE ON movies
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_movie_media_configs_updated_at ON movie_media_configs;
+CREATE TRIGGER update_movie_media_configs_updated_at BEFORE UPDATE ON movie_media_configs
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 DROP TRIGGER IF EXISTS update_user_settings_updated_at ON user_settings;
 CREATE TRIGGER update_user_settings_updated_at BEFORE UPDATE ON user_settings
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -176,6 +220,7 @@ CREATE TABLE IF NOT EXISTS routines (
   name TEXT NOT NULL,
   song_audio_url TEXT, -- URL or local storage reference for the song
   song_audio_filename TEXT,
+  song_storage_path TEXT,
   scheduled_time TIME NOT NULL,
   enabled BOOLEAN DEFAULT true,
   days_of_week INTEGER[] DEFAULT ARRAY[1,2,3,4,5,6,7], -- 1=Monday, 7=Sunday

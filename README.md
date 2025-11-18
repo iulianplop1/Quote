@@ -52,13 +52,25 @@ npm install
 ```env
 VITE_SUPABASE_URL=your_supabase_project_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+VITE_SUPABASE_MEDIA_BUCKET=quote-media
 VITE_GEMINI_API_KEY=your_gemini_api_key
 VITE_TMDB_API_KEY=your_tmdb_api_key  # Optional
 VITE_ELEVEN_LABS_API_KEY=your_elevenlabs_api_key  # Optional - for premium TTS voices
 VITE_ELEVEN_LABS_VOICE_ID=TxGEqnHWrfWFTfGW9XjX  # Optional - defaults to Josh
 ```
 
-### 5. Deploy Supabase Edge Function
+### 5. Create a Supabase Storage Bucket
+
+1. In the Supabase dashboard go to **Storage > Buckets**
+2. Create a bucket named `quote-media` (or anything else and update `VITE_SUPABASE_MEDIA_BUCKET`)
+3. Mark the bucket as **public** so media can stream on both desktop and mobile
+4. Add the following policy in the bucket's Policies tab so that users can only manage their own files:
+   ```sql
+   (auth.uid() = request.auth.uid())
+   ```
+5. The frontend will automatically upload movie audio/SRT files and routine songs into this bucket
+
+### 6. Deploy Supabase Edge Function
 
 1. Install Supabase CLI: `npm install -g supabase`
 2. Login: `supabase login`
@@ -71,7 +83,7 @@ supabase functions deploy generate-daily-quotes
 
 5. Set up a cron job or use Supabase's pg_cron extension to call this function daily
 
-### 6. Set Up Scheduled Quote Generation
+### 7. Set Up Scheduled Quote Generation
 
 You have two options:
 
@@ -102,19 +114,19 @@ SELECT cron.schedule(
 
 Use a service like [cron-job.org](https://cron-job.org) to call your Edge Function URL every hour.
 
-### 7. Run Development Server
+### 8. Run Development Server
 
 ```bash
 npm run dev
 ```
 
-### 8. Build for Production
+### 9. Build for Production
 
 ```bash
 npm run build
 ```
 
-### 9. Deploy to GitHub Pages
+### 10. Deploy to GitHub Pages
 
 1. Update `vite.config.js` with your repository name (if different from "Quote")
 2. Install GitHub Pages deploy plugin or use GitHub Actions

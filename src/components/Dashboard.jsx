@@ -21,7 +21,7 @@ import {
   isElevenLabsAvailable,
 } from '../lib/textToSpeech'
 import { playOriginalQuoteSegment } from '../lib/originalAudio'
-import { getMovieMediaConfigPersisted, setMovieMediaConfigPersisted } from '../lib/mediaConfig'
+import { getMovieMediaConfigPersisted } from '../lib/mediaConfig'
 
 export default function Dashboard() {
   const [todayQuote, setTodayQuote] = useState(null)
