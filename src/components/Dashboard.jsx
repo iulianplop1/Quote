@@ -5,6 +5,7 @@ import { format } from 'date-fns'
 import { Clock, Film, User, Eye, EyeOff, Sparkles, Volume2, VolumeX, Pause, Play, Settings } from 'lucide-react'
 import { getQuoteContext } from '../lib/gemini'
 import CharacterAnalysis from './CharacterAnalysis'
+import { useDemo } from '../lib/demoContext'
 import { 
   speakQuote, 
   pauseSpeaking, 
@@ -24,6 +25,7 @@ import { playOriginalQuoteSegment } from '../lib/originalAudio'
 import { getMovieMediaConfigPersisted } from '../lib/mediaConfig'
 
 export default function Dashboard() {
+  const { isDemo, DEMO_MOVIES, DEMO_QUOTES } = useDemo()
   const [todayQuote, setTodayQuote] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showContext, setShowContext] = useState(false)
@@ -90,6 +92,7 @@ export default function Dashboard() {
   }
 
   const loadScheduleTime = async () => {
+    if (isDemo) return
     const { data: { user } } = await supabase.auth.getUser()
     const { data } = await supabase
       .from('user_settings')
@@ -103,6 +106,21 @@ export default function Dashboard() {
   }
 
   const loadTodayQuote = async () => {
+    if (isDemo) {
+      const randomQ = DEMO_QUOTES[Math.floor(Math.random() * DEMO_QUOTES.length)]
+      const movie = DEMO_MOVIES.find(m => m.id === randomQ.movie_id)
+      setTodayQuote({
+        id: 'demo-daily',
+        quotes: {
+          id: randomQ.id,
+          quote: randomQ.quote,
+          character: randomQ.character,
+          movies: { id: movie?.id || '', title: movie?.title || 'Unknown', poster_url: movie?.poster_url || null }
+        }
+      })
+      setLoading(false)
+      return
+    }
     try {
       const { data: { user } } = await supabase.auth.getUser()
       

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
+import { useDemo } from '../lib/demoContext'
 import { Plus, Trash2, Clock, Music, Film, Play, Pause, X, Loader2, Calendar } from 'lucide-react'
 import { speakQuote, stopSpeaking, isSpeaking, pauseSpeaking, resumeSpeaking, initializeSpeechSynthesis } from '../lib/textToSpeech'
 import { playOriginalQuoteSegment } from '../lib/originalAudio'
@@ -9,6 +10,7 @@ import { buildStoragePath, deleteFileFromBucket, uploadFileToBucket } from '../l
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
 export default function Routines() {
+  const { isDemo, DEMO_MOVIES, DEMO_QUOTES } = useDemo()
   const [routines, setRoutines] = useState([])
   const [movies, setMovies] = useState([])
   const [loading, setLoading] = useState(true)
@@ -135,6 +137,26 @@ export default function Routines() {
   }
 
   const loadRoutines = async () => {
+    if (isDemo) {
+      setRoutines([{
+        id: 'demo-routine-1',
+        name: 'The Dark Knight Morning',
+        song_audio_url: 'https://jjcjttbnpozsrsaicvps.supabase.co/storage/v1/object/public/songs/demo-song.mp3',
+        song_audio_filename: 'Hans Zimmer - Rise.mp3',
+        scheduled_time: '08:00:00',
+        enabled: true,
+        days_of_week: [1, 2, 3, 4, 5],
+        routine_movies: [
+          {
+            movie_id: 'ca3ea622-4002-494e-a566-6c5d9a760473',
+            quote_limit: 3,
+            movies: { title: 'The Dark Knight' }
+          }
+        ]
+      }])
+      setLoading(false)
+      return
+    }
     try {
       const { data: { user } } = await supabase.auth.getUser()
       const { data, error } = await supabase
@@ -164,6 +186,10 @@ export default function Routines() {
   }
 
   const loadMovies = async () => {
+    if (isDemo) {
+      setMovies(DEMO_MOVIES)
+      return
+    }
     try {
       const { data: { user } } = await supabase.auth.getUser()
       const { data, error } = await supabase
@@ -324,6 +350,22 @@ export default function Routines() {
 
     setPlayingRoutineId(routine.id)
     setIsPaused(false)
+
+    if (isDemo) {
+      // Demo playback logic
+      const movieConfigs = routine.routine_movies || []
+      const allQuotes = []
+      for (const rm of movieConfigs) {
+        const quotes = DEMO_QUOTES.filter(q => q.movie_id === rm.movie_id).slice(0, rm.quote_limit || 3)
+        allQuotes.push(...quotes)
+      }
+      
+      if (allQuotes.length > 0) {
+        await playQuotesSequentially(routine, allQuotes)
+      }
+      setPlayingRoutineId(null)
+      return
+    }
 
     if ('mediaSession' in navigator) {
       navigator.mediaSession.metadata = new MediaMetadata({

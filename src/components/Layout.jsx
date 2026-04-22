@@ -2,10 +2,12 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Home, BookOpen, Search, Settings, Moon, Sun, LogOut, Clock, Menu } from 'lucide-react'
 import { useState, useEffect } from 'react'
+import { useDemo } from '../lib/demoContext'
 
 export default function Layout({ children }) {
   const location = useLocation()
   const navigate = useNavigate()
+  const { isDemo, exitDemo } = useDemo()
   const [darkMode, setDarkMode] = useState(() => {
     return localStorage.getItem('darkMode') === 'true'
   })
@@ -25,6 +27,11 @@ export default function Layout({ children }) {
   }, [location.pathname])
 
   const handleLogout = async () => {
+    if (isDemo) {
+      exitDemo()
+      navigate('/login')
+      return
+    }
     await supabase.auth.signOut()
     navigate('/login')
   }

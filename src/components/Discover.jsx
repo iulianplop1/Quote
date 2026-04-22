@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { useDemo } from '../lib/demoContext'
 import { Search, Sparkles, Loader2 } from 'lucide-react'
 import { searchThemes } from '../lib/gemini'
 
 export default function Discover() {
+  const { isDemo, DEMO_MOVIES, DEMO_QUOTES } = useDemo()
   const [theme, setTheme] = useState('')
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(false)
@@ -14,6 +16,10 @@ export default function Discover() {
   }, [])
 
   const loadMovies = async () => {
+    if (isDemo) {
+      setMovies(DEMO_MOVIES)
+      return
+    }
     try {
       const { data: { user } } = await supabase.auth.getUser()
       const { data } = await supabase
@@ -31,6 +37,23 @@ export default function Discover() {
     if (!theme.trim() || movies.length === 0) return
 
     setLoading(true)
+    if (isDemo) {
+      // Mock search in demo mode
+      setTimeout(() => {
+        const query = theme.toLowerCase()
+        const matched = DEMO_QUOTES.filter(q => 
+          q.quote.toLowerCase().includes(query) || 
+          q.character.toLowerCase().includes(query)
+        ).map(q => ({
+          quote: q.quote,
+          character: q.character,
+          movie: DEMO_MOVIES.find(m => m.id === q.movie_id)?.title || 'Unknown'
+        }))
+        setResults(matched)
+        setLoading(false)
+      }, 800)
+      return
+    }
     try {
       // Transform movies to match the format expected by searchThemes
       const scripts = movies.map(m => ({

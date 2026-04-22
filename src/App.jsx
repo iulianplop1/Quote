@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { supabase } from './lib/supabase'
+import { DemoProvider, useDemo, DEMO_USER } from './lib/demoContext'
 import Login from './components/Login'
 import Dashboard from './components/Dashboard'
 import Library from './components/Library'
@@ -9,9 +10,10 @@ import Settings from './components/Settings'
 import Routines from './components/Routines'
 import Layout from './components/Layout'
 
-function App() {
+function AppInner() {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
+  const { isDemo } = useDemo()
 
   useEffect(() => {
     // Check active session
@@ -38,6 +40,8 @@ function App() {
     )
   }
 
+  const activeUser = isDemo ? DEMO_USER : user
+
   // Use basename for GitHub Pages deployment
   const basename = import.meta.env.MODE === 'production' ? '/Quote' : ''
 
@@ -50,11 +54,11 @@ function App() {
       }}
     >
       <Routes>
-        <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
+        <Route path="/login" element={!activeUser ? <Login /> : <Navigate to="/" />} />
         <Route
           path="/"
           element={
-            user ? (
+            activeUser ? (
               <Layout>
                 <Dashboard />
               </Layout>
@@ -66,7 +70,7 @@ function App() {
         <Route
           path="/library"
           element={
-            user ? (
+            activeUser ? (
               <Layout>
                 <Library />
               </Layout>
@@ -78,7 +82,7 @@ function App() {
         <Route
           path="/discover"
           element={
-            user ? (
+            activeUser ? (
               <Layout>
                 <Discover />
               </Layout>
@@ -90,7 +94,7 @@ function App() {
         <Route
           path="/routines"
           element={
-            user ? (
+            activeUser ? (
               <Layout>
                 <Routines />
               </Layout>
@@ -102,7 +106,7 @@ function App() {
         <Route
           path="/settings"
           element={
-            user ? (
+            activeUser ? (
               <Layout>
                 <Settings />
               </Layout>
@@ -116,5 +120,12 @@ function App() {
   )
 }
 
-export default App
+function App() {
+  return (
+    <DemoProvider>
+      <AppInner />
+    </DemoProvider>
+  )
+}
 
+export default App

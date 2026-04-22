@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { useDemo } from '../lib/demoContext'
 import { Clock, Save, Check } from 'lucide-react'
 
 export default function Settings() {
+  const { isDemo } = useDemo()
   const [scheduleTime, setScheduleTime] = useState('08:00')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -12,6 +14,7 @@ export default function Settings() {
   }, [])
 
   const loadSettings = async () => {
+    if (isDemo) return
     try {
       const { data: { user } } = await supabase.auth.getUser()
       const { data } = await supabase
@@ -30,6 +33,11 @@ export default function Settings() {
   }
 
   const saveSettings = async () => {
+    if (isDemo) {
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+      return
+    }
     setSaving(true)
     setSaved(false)
     try {

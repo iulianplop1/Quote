@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useNavigate } from 'react-router-dom'
 import { Film } from 'lucide-react'
+import { useDemo } from '../lib/demoContext'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -10,6 +11,12 @@ export default function Login() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
+  const { enterDemo } = useDemo()
+
+  const handleDemoLogin = () => {
+    enterDemo()
+    navigate('/')
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -107,8 +114,22 @@ export default function Login() {
               : "Don't have an account? Sign up"}
           </button>
         </div>
+
+        <div className="mt-4 relative flex items-center">
+          <div className="flex-grow border-t border-slate-200 dark:border-slate-700"></div>
+          <span className="mx-3 text-xs text-slate-400">or</span>
+          <div className="flex-grow border-t border-slate-200 dark:border-slate-700"></div>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleDemoLogin}
+          className="mt-4 w-full py-3 px-4 rounded-xl border-2 border-primary-200 dark:border-primary-800 text-primary-700 dark:text-primary-300 font-semibold text-sm hover:bg-primary-50 dark:hover:bg-primary-900/30 transition-all duration-200 flex items-center justify-center gap-2"
+        >
+          <Film size={16} />
+          Try Demo — Dark Knight, Joker, Inception & more
+        </button>
       </div>
     </div>
   )
 }
-

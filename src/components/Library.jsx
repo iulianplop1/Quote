@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
+import { useDemo } from '../lib/demoContext'
 import { Plus, Trash2, Upload, Link as LinkIcon, Loader2, Quote, X, Volume2, VolumeX, Pause, Play, Settings, PlayCircle, Film } from 'lucide-react'
 import { parseScript, parseSubtitleFile } from '../lib/gemini'
 import { fetchScriptFromUrl } from '../lib/scriptFetcher'
@@ -45,6 +46,7 @@ const formatTimestamp = (ms) => {
 }
 
 export default function Library() {
+  const { isDemo, DEMO_MOVIES, DEMO_QUOTES } = useDemo()
   const [movies, setMovies] = useState([])
   const [loading, setLoading] = useState(true)
   const [showAddModal, setShowAddModal] = useState(false)
@@ -164,6 +166,11 @@ export default function Library() {
   }
 
   const loadMovies = async () => {
+    if (isDemo) {
+      setMovies(DEMO_MOVIES)
+      setLoading(false)
+      return
+    }
     try {
       const { data: { user } } = await supabase.auth.getUser()
       const { data } = await supabase
@@ -475,10 +482,17 @@ export default function Library() {
   }
 
   const handleViewQuotes = async (movie) => {
-    // Stop any currently playing quote
+    // Stop any other quote and play this one
     stopSpeaking()
     setPlayingQuoteId(null)
     setIsPausedState(false)
+    setSelectedMovie(movie)
+
+    if (isDemo) {
+      const demoQuotes = DEMO_QUOTES.filter(q => q.movie_id === movie.id)
+      setMovieQuotes(demoQuotes)
+      return
+    }
     
     // Load media config for this movie
     const cfg = await getMovieMediaConfigPersisted(movie.id)
@@ -619,16 +633,18 @@ export default function Library() {
             My Library
           </h1>
           <p className="text-slate-600 dark:text-slate-400">
-            Manage your movie scripts and quotes
+            {isDemo ? 'Demo library — 5 iconic films' : 'Manage your movie scripts and quotes'}
           </p>
         </div>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="btn-primary flex items-center space-x-2"
-        >
-          <Plus size={20} />
-          <span>Add Movie</span>
-        </button>
+        {!isDemo && (
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="btn-primary flex items-center space-x-2"
+          >
+            <Plus size={20} />
+            <span>Add Movie</span>
+          </button>
+        )}
       </div>
 
       {movies.length === 0 ? (
