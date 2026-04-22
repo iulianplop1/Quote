@@ -34,7 +34,7 @@ const DEMO_MOVIES = [
     id: 'ca3ea622-4002-494e-a566-6c5d9a760473',
     user_id: 'demo',
     title: 'The Dark Knight',
-    poster_url: 'https://www.themoviedb.org/t/p/w600_and_h900_face/qJ2tW6WMUDp9QmSJJhPru1FIpS8.jpg',
+    poster_url: 'https://www.themoviedb.org/t/p/w600_and_h900_face/qJ2tW6WMUDux911r6m7haRef0WH.jpg',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
