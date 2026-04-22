@@ -1,208 +1,64 @@
-# Quote - Daily Movie Quotes App
+# 🎬 Quote — AI-Powered Daily Wisdom from Iconic Scripts
 
-A beautiful, minimalistic web app that delivers daily movie quotes from your favorite scripts. Built with React, Supabase, and Gemini AI.
+[![Live Demo](https://img.shields.io/badge/Demo-Live-brightgreen)](https://iulianplop1.github.io/Quote/)
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-blue)](https://github.com/iulianplop1/Quote)
 
-## Features
+**Quote** is a premium web application designed for cinephiles who want to start their day with a dose of inspiration. It transforms complex movie scripts into a curated daily experience, using AI to extract the most significant moments from cinematic history.
 
-- 🎬 **Script Management**: Upload movie scripts or fetch from URLs (e.g., IMSDB)
-- 🤖 **AI-Powered Parsing**: Uses Gemini 2.5 Flash to intelligently parse scripts and extract quotes
-- 📅 **Scheduled Quotes**: Automatic daily quote generation at your preferred time
-- 🎯 **Smart Selection**: Only shows high-significance quotes (score ≥ 7) when possible
-- 🔄 **No Repeats**: Tracks all shown quotes to ensure you never see the same one twice
-- 🎨 **Beautiful UI**: Minimalistic, intuitive design with light/dark mode
-- 🎭 **Context Feature**: See the scene context around any quote
-- 🔍 **Thematic Search**: Discover quotes by theme across your entire library
-- 🎪 **Gamification**: "Guess the Quote" mode to test your movie knowledge
-- 🖼️ **Movie Posters**: Automatic poster fetching from TMDB
+---
 
-## Tech Stack
+## ✨ The Vision
 
-- **Frontend**: React + Vite
-- **Styling**: Tailwind CSS
-- **Backend**: Supabase (Auth + Database)
-- **AI**: Google Gemini 2.5 Flash API
-- **Hosting**: GitHub Pages
+Traditional script reading is a dense, manual process. **Quote** reimagines this by acting as a digital curator. It doesn't just store scripts; it understands them. Whether it's the philosophical grit of *Fight Club* or the chaotic wisdom of *Joker*, the app delivers high-impact dialogue directly to your dashboard.
 
-## Setup Instructions
+### 🌟 Key Features
 
-### 1. Clone the Repository
+*   🎭 **AI Script Analysis**: Leverages **Gemini 2.5 Flash** to intelligently parse raw scripts and extract quotes based on narrative significance.
+*   📅 **Morning Routine Integration**: Schedule your daily quote to arrive exactly when you need it.
+*   🔍 **Thematic Discovery**: Search your entire library by abstract themes like "courage," "betrayal," or "justice" using semantic AI search.
+*   🎬 **Cinematic Context**: Instantly view the scene surrounding a quote to relive the moment.
+*   🔊 **Premium Voice Synthesis**: Integrated with **ElevenLabs** for high-fidelity, character-appropriate text-to-speech.
+*   🌘 **Modern Aesthetics**: A glassmorphic, responsive interface with deep dark mode support.
 
-```bash
-git clone <your-repo-url>
-cd Quote
-```
+---
 
-### 2. Install Dependencies
+## 🛠️ Technical Architecture
 
-```bash
-npm install
-```
+Built with a focus on performance, scalability, and modern DX:
 
-### 3. Set Up Supabase
+*   **Frontend**: React 18 + Vite (for lightning-fast HMR).
+*   **Styling**: Tailwind CSS for a bespoke, premium UI.
+*   **Backend**: Supabase (PostgreSQL + Auth + Storage).
+*   **AI Engine**: Google Gemini Pro & Flash for script parsing and thematic search.
+*   **DevOps**: Automated deployment via GitHub Actions to GitHub Pages.
 
-1. Create a new project at [supabase.com](https://supabase.com)
-2. Go to SQL Editor and run the SQL from `supabase/schema.sql`
-3. Get your project URL and anon key from Settings > API
+---
 
-### 4. Set Up Environment Variables
+## 🚀 Experience the Demo
 
-1. Copy `.env.example` to `.env`
-2. Fill in your credentials:
+I've restored the project with a **full Demo Mode** featuring 90+ iconic quotes from my personal collection:
 
-```env
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-VITE_SUPABASE_MEDIA_BUCKET=quote-media
-VITE_GEMINI_API_KEY=your_gemini_api_key
-VITE_TMDB_API_KEY=your_tmdb_api_key  # Optional
-VITE_ELEVEN_LABS_API_KEY=your_elevenlabs_api_key  # Optional - for premium TTS voices
-VITE_ELEVEN_LABS_VOICE_ID=TxGEqnHWrfWFTfGW9XjX  # Optional - defaults to Josh
-```
+1.  Visit the [Live Demo](https://iulianplop1.github.io/Quote/).
+2.  Click the **"Try Demo"** button on the login screen.
+3.  Explore the Library, Dashboard, and Routines with pre-loaded data from *The Dark Knight*, *Inception*, *Fight Club*, and more.
 
-### 5. Create a Supabase Storage Bucket
+---
 
-1. In the Supabase dashboard go to **Storage > Buckets**
-2. Create a bucket named `quote-media` (or anything else and update `VITE_SUPABASE_MEDIA_BUCKET`)
-3. Mark the bucket as **public** so media can stream on both desktop and mobile
-4. Add the following policy in the bucket's Policies tab so that users can only manage their own files:
-   ```sql
-   (auth.uid() = request.auth.uid())
-   ```
-5. The frontend will automatically upload movie audio/SRT files and routine songs into this bucket
+## 📖 Setup & Development
 
-### 6. Deploy Supabase Edge Function
+If you'd like to run your own instance:
 
-1. Install Supabase CLI: `npm install -g supabase`
-2. Login: `supabase login`
-3. Link your project: `supabase link --project-ref your-project-ref`
-4. Deploy the function:
+1.  **Clone & Install**:
+    ```bash
+    git clone https://github.com/iulianplop1/Quote.git
+    npm install
+    ```
+2.  **Environment**: Copy `env.example` to `.env` and add your Supabase and Gemini keys.
+3.  **Database**: Run `supabase/schema.sql` in your Supabase SQL Editor.
+4.  **Run**: `npm run dev`
 
-```bash
-supabase functions deploy generate-daily-quotes
-```
+---
 
-5. Set up a cron job or use Supabase's pg_cron extension to call this function daily
+## 📄 License
 
-### 7. Set Up Scheduled Quote Generation
-
-You have two options:
-
-**Option A: Using pg_cron (Recommended)**
-
-Run this SQL in your Supabase SQL Editor:
-
-```sql
--- Enable pg_cron extension
-CREATE EXTENSION IF NOT EXISTS pg_cron;
-
--- Schedule the function to run every hour
-SELECT cron.schedule(
-  'generate-daily-quotes',
-  '0 * * * *', -- Every hour at minute 0
-  $$
-  SELECT
-    net.http_post(
-      url := 'https://your-project-ref.supabase.co/functions/v1/generate-daily-quotes',
-      headers := '{"Content-Type": "application/json", "Authorization": "Bearer YOUR_SERVICE_ROLE_KEY"}'::jsonb,
-      body := '{}'::jsonb
-    ) AS request_id;
-  $$
-);
-```
-
-**Option B: External Cron Service**
-
-Use a service like [cron-job.org](https://cron-job.org) to call your Edge Function URL every hour.
-
-### 8. Run Development Server
-
-```bash
-npm run dev
-```
-
-### 9. Build for Production
-
-```bash
-npm run build
-```
-
-### 10. Deploy to GitHub Pages
-
-1. Update `vite.config.js` with your repository name (if different from "Quote")
-2. Install GitHub Pages deploy plugin or use GitHub Actions
-3. **Set Environment Variables**: 
-   - For GitHub Pages, you'll need to set environment variables in your deployment platform
-   - If using GitHub Actions, add secrets in Settings > Secrets and variables > Actions
-   - If using Vercel/Netlify, add environment variables in their dashboard
-   - **Important**: The `.env` file is not committed to Git for security
-4. Push to your repository
-5. Enable GitHub Pages in repository settings
-
-### 10. Setting Up ElevenLabs (Optional)
-
-ElevenLabs provides premium text-to-speech voices. To enable:
-
-1. Sign up at [elevenlabs.io](https://elevenlabs.io/) (free tier available)
-2. Get your API key from your account settings
-3. Add `VITE_ELEVEN_LABS_API_KEY` to your environment variables
-4. **For local development**: Add to your `.env` file
-5. **For deployment**: Add as an environment variable in your hosting platform
-6. Restart your dev server or redeploy
-
-**Note**: Without the ElevenLabs API key, the app will automatically use browser TTS as a fallback. The UI will show a helpful message explaining how to enable premium voices.
-
-## Project Structure
-
-```
-Quote/
-├── src/
-│   ├── components/       # React components
-│   │   ├── Dashboard.jsx # Main quote display
-│   │   ├── Library.jsx   # Movie management
-│   │   ├── Discover.jsx  # Thematic search
-│   │   ├── Settings.jsx  # User settings
-│   │   ├── Login.jsx     # Authentication
-│   │   └── Layout.jsx    # App layout
-│   ├── lib/              # Utilities
-│   │   ├── supabase.js   # Supabase client
-│   │   ├── gemini.js     # Gemini API functions
-│   │   ├── tmdb.js       # TMDB API
-│   │   └── scriptFetcher.js # Script fetching
-│   ├── App.jsx           # Main app component
-│   ├── main.jsx          # Entry point
-│   └── index.css         # Global styles
-├── supabase/
-│   ├── functions/        # Edge Functions
-│   │   └── generate-daily-quotes/
-│   └── schema.sql        # Database schema
-├── package.json
-├── vite.config.js
-└── README.md
-```
-
-## Usage
-
-1. **Sign Up/Login**: Create an account or sign in
-2. **Add Movies**: Go to Library and add movies by URL or file upload
-3. **Set Schedule**: Configure your preferred quote time in Settings
-4. **View Quotes**: Check your Dashboard daily for new quotes
-5. **Explore**: Use Discover to search quotes by theme
-6. **Context**: Click "Show Context" on any quote to see the scene
-
-## API Keys
-
-- **Gemini API**: Get from [Google AI Studio](https://makersuite.google.com/app/apikey)
-- **TMDB API**: Get from [The Movie Database](https://www.themoviedb.org/settings/api) (optional)
-- **Supabase**: Get from your Supabase project settings
-- **ElevenLabs API**: Get from [ElevenLabs](https://elevenlabs.io/) (optional - for premium text-to-speech voices)
-  - Free tier includes 10,000 characters per month
-  - Without this key, the app will use browser TTS as fallback
-
-## License
-
-MIT
-
-## Contributing
-
-Feel free to submit issues and enhancement requests!
-
+MIT © [Iulian Plop](https://github.com/iulianplop1)
